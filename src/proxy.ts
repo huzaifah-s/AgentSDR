@@ -48,6 +48,10 @@ const PUBLIC = [
   // CALL_WORKER_SECRET, not a session. Every route under this prefix starts
   // with authorizeWorker() (src/lib/calls/stations.ts) — never add one that doesn't.
   "/api/call-worker/",
+  // The public API, called by other applications with an API key, not a
+  // session. Every route under this prefix starts with withApiKey()
+  // (src/lib/publicApi/http.ts); never add one that doesn't.
+  "/api/v1/",
 ];
 
 /**

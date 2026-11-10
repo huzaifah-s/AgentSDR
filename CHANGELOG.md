@@ -9,6 +9,19 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+### Added
+
+- **Public API with API keys.** Owners and admins create keys in Settings,
+  API keys; another application uses one to list email campaigns
+  (`GET /api/v1/campaigns`), add leads to a campaign
+  (`POST /api/v1/campaigns/:id/leads`, the same duplicate and suppression
+  rules as a sheet import) and stop a lead's sequence without suppressing
+  them (`POST /api/v1/campaigns/:id/leads/stop`). See `docs/api.mdx`.
+
+### Migrations
+
+- `bun run scripts/create-api-keys.ts` creates the `api_keys` table.
+
 ## [0.3.1] - 2026-10-08
 
 ### Fixed

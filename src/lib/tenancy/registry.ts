@@ -59,6 +59,8 @@ export const SCOPED_TABLES: readonly ScopedTable[] = [
   snake("grid_providers"),
   // Sending rules
   snake("channel_settings"),
+  // Public API keys
+  snake("api_keys"),
   // Calling and WhatsApp
   snake("call_campaigns"),
   snake("call_sessions"),

@@ -176,6 +176,7 @@
           {
             "group": "Reference",
             "pages": [
+              "api",
               "database",
               "multi-tenancy/conventions"
             ]

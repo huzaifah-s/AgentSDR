@@ -182,8 +182,8 @@ export const importRuns = pgTable(
       .notNull()
       .references(() => organizations.id),
     id: uuid("id").primaryKey().defaultRandom(),
-    /** grid | file */
-    source: text("source").notNull().$type<"grid" | "file">(),
+    /** grid | file | api (the public API, src/lib/publicApi/) */
+    source: text("source").notNull().$type<"grid" | "file" | "api">(),
     gridTableId: uuid("grid_table_id").references(() => gridTables.id, { onDelete: "set null" }),
     filename: text("filename"),
     /** database | campaign */

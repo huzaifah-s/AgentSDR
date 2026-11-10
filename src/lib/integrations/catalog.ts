@@ -2,6 +2,7 @@ import type { GridColumn } from "@/lib/grid/schema";
 import type { IntegrationOutputConfig } from "@/lib/grid/types";
 import { APOLLO } from "./apollo/definition";
 import { CLEANLIST } from "./cleanlist/definition";
+import { COMPANYENRICH } from "./companyenrich/definition";
 import { CONTACTOUT } from "./contactout/definition";
 import { FINDYMAIL } from "./findymail/definition";
 import { FULLENRICH } from "./fullenrich/definition";
@@ -37,6 +38,7 @@ export const ACTION_CATEGORIES: ReadonlyArray<{ key: ActionCategory; name: strin
 export const INTEGRATIONS: readonly IntegrationDefinition[] = [
   APOLLO,
   CLEANLIST,
+  COMPANYENRICH,
   SNOV,
   MILLIONVERIFIER,
   CONTACTOUT,

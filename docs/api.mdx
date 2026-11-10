@@ -1,0 +1,112 @@
+---
+title: "Public API"
+description: "Let another application add leads to your email campaigns and stop a lead's sequence, with an API key."
+icon: "code"
+---
+
+The public API lets another application work with your email campaigns: list them, add leads, and stop a lead's sequence when that person no longer needs follow-ups (for example, they signed up in your product). It is small on purpose and lives under `/api/v1/`.
+
+## API keys
+
+Owners and admins create keys in **Settings, API keys**. Give each key the name of the application that uses it.
+
+- The key is shown **once**, when you create it. Copy it into the other application's settings. AgentSDR stores only a hash of it, so a lost key cannot be shown again: revoke it and create a new one.
+- A key acts for the **whole organization** that created it, and only that organization.
+- **Revoke** stops a key at once. Settings keeps showing when each key was last used.
+
+Send the key in the `Authorization` header of every request:
+
+```sh
+curl https://agentsdr.example.com/api/v1/campaigns \
+  -H "Authorization: Bearer asdr_..."
+```
+
+A missing, unknown or revoked key gets `401`. Errors are JSON: `{ "error": "..." }`, with a message that names the field at fault.
+
+## List email campaigns
+
+`GET /api/v1/campaigns`
+
+```json
+{
+  "campaigns": [
+    { "id": "0b6a3c1e-...", "name": "Launch follow-up", "status": "active", "createdAt": "2026-11-05T09:30:00.000Z" }
+  ]
+}
+```
+
+Use the `id` in the calls below. You can also copy it from the campaign's address in the app.
+
+## Add leads to a campaign
+
+`POST /api/v1/campaigns/:id/leads`
+
+```sh
+curl -X POST https://agentsdr.example.com/api/v1/campaigns/0b6a3c1e-.../leads \
+  -H "Authorization: Bearer asdr_..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "leads": [
+      {
+        "email": "maker@example.com",
+        "firstName": "Asha",
+        "lastName": "Rao",
+        "company": "Example Inc",
+        "customFields": { "productName": "Example", "website": "https://example.com" }
+      }
+    ]
+  }'
+```
+
+| Field | |
+|---|---|
+| `email` | Required. |
+| `firstName`, `lastName`, `title` | Optional. |
+| `company`, `companyDomain`, `companyLinkedinUrl` | Optional. |
+| `linkedinUrl` | Optional. |
+| `customFields` | Optional. Each key becomes a merge field in the sequence: `productName` is `{{productName}}`. Names start with a letter and use letters, digits and `_`. Values are strings, numbers or booleans. |
+
+Up to 500 leads per request. Any other field is refused, so a misspelt name is caught instead of silently missing from the email.
+
+The rules are the same as importing a sheet:
+
+- A lead already in this campaign is skipped (`skippedDuplicate`). Sending the same list twice is safe.
+- An address on the suppression list (unsubscribed or bounced) is skipped (`skippedSuppressed`).
+- An invalid email is reported in `failed`, with its position in your `leads` list. The rest are still imported.
+
+```json
+{ "total": 3, "imported": 1, "skippedSuppressed": 0, "skippedDuplicate": 1, "failed": [{ "index": 2, "email": "not-an-email", "error": "invalid email" }] }
+```
+
+New leads start the sequence like any other: when the campaign is active, inside its sending hours and the mailboxes' daily limits.
+
+## Stop a lead's sequence
+
+`POST /api/v1/campaigns/:id/leads/stop`
+
+```sh
+curl -X POST https://agentsdr.example.com/api/v1/campaigns/0b6a3c1e-.../leads/stop \
+  -H "Authorization: Bearer asdr_..." \
+  -H "Content-Type: application/json" \
+  -d '{ "emails": ["maker@example.com"] }'
+```
+
+No further step of this campaign is sent to these people: their sequence ends as if it had run out (status **Sequence completed**). This is not an unsubscribe. They stay free to be added to a later campaign; use the suppression list for people who must never be emailed again.
+
+Up to 500 emails per request. Calling it again is harmless.
+
+```json
+{ "stopped": 1, "alreadyEnded": 0, "notFound": [] }
+```
+
+- `stopped`: their sequence was running and has ended.
+- `alreadyEnded`: they were in the campaign but their sequence had already ended (finished, replied, bounced or suppressed).
+- `notFound`: addresses that are not leads of this campaign.
+
+A reply already stops a lead's sequence on its own; you only need this call for something that happens outside email.
+
+## Self-hosting notes
+
+- The table behind the keys is created by `scripts/create-api-keys.ts`. A fresh install has it already; an existing one runs the script once (see [Upgrading](/self-hosting/production#upgrading)).
+- While `PAUSE_CAMPAIGN_MUTATIONS` is on, adding and stopping leads answer `503`, like the same actions in the app.
+- The public demo refuses both.

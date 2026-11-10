@@ -45,6 +45,7 @@ Drizzle table definitions live in domain-scoped files, not one central schema:
 - `src/lib/calls/schema.ts` — WhatsApp calls placed from the app (`call_sessions`)
 - `src/lib/scheduler/schema.ts` — the in-process scheduler's slot claims
   (`scheduled_job_runs`, platform-wide; see `src/lib/scheduler/`)
+- `src/lib/publicApi/schema.ts` - API keys for the public API (`api_keys`)
 - `src/lib/auth/schema.ts` — Better Auth: users, sessions, accounts,
   verifications, organizations, members, invitations, teams, team_members
 
@@ -151,6 +152,19 @@ cron secrets and tuning knobs. Two deliberate exceptions:
 `scripts/migrate-env-to-integrations.ts` copied an existing env setup into
 the store once (verifying each; Langfuse's old `LANGFUSE_*` keys too); keep
 it as the record of that move.
+
+## The public API: API keys, not sessions
+
+`/api/v1/*` is for other applications, not the UI (`docs/api.mdx`). It is
+public in `proxy.ts`, so every route there starts with `withApiKey()`
+(`src/lib/publicApi/http.ts`), which finds the organization from the key and
+runs the handler in `runInOrganization`; never add one that doesn't. Keys
+are `api_keys` rows (Settings, API keys; the integrations permission),
+stored as a SHA-256 hash and shown once. A route reuses the app's own lib
+functions rather than its own copy of the rules: leads go through
+`importRowsForCampaign` (the sheet import's duplicate and suppression
+checks), a stop through `stopCampaignLeads` (`sequence_completed`, not
+suppression). Keep request parsing pure in `requests.ts`, with tests.
 
 ## Prompts live in Langfuse, and every AI call is traced
 

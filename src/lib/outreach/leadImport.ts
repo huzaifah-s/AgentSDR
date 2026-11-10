@@ -208,10 +208,12 @@ export type ImportResult = {
   failed: { row: number; email: string; error: string }[];
 };
 
+/** `firstRow` is the number reported for rows[0] in `failed`: 2 for a sheet (row 1 is its header), 0 for an API request's list. */
 export function planEmailCampaignImport(
   rows: ParsedRow[],
   suppressedEmails: ReadonlySet<string>,
   existingCampaignEmails: ReadonlySet<string>,
+  firstRow = 2,
 ) {
   let imported = 0;
   let skippedSuppressed = 0;
@@ -222,7 +224,7 @@ export function planEmailCampaignImport(
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const rowNum = i + 2;
+    const rowNum = i + firstRow;
     if (!normalizeEmail(row.email)) {
       failed.push({ row: rowNum, email: row.email, error: row.email ? "invalid email" : "missing email" });
       continue;
@@ -259,7 +261,27 @@ export async function importLeadsForCampaign(
   if (error) return { error };
   if (rows.length === 0) return { error: "No rows with an Email column were found" };
   if (rows.length > MAX_IMPORT_ROWS) return { error: `Too many rows (max ${MAX_IMPORT_ROWS} per import)` };
+  return importRowsForCampaign(campaignId, rows, {
+    source: "file",
+    filename: options.filename ?? null,
+    mapping: {
+      mode: options.mapping ? "explicit-column-mapping" : "legacy-email-auto-map",
+      mapped: options.mapping ?? ["email", "linkedinUrl", "firstName", "lastName", "title", "company", "domain"],
+      extra: "people.raw",
+    },
+  });
+}
 
+/**
+ * Imports already-parsed rows for a campaign: the part a spreadsheet upload
+ * and the public API (POST /api/v1/campaigns/:id/leads) share, so both skip
+ * suppressed addresses and leads already in the campaign the same way.
+ */
+export async function importRowsForCampaign(
+  campaignId: string,
+  rows: ParsedRow[],
+  run: { source: "file" | "api"; filename: string | null; mapping: Record<string, unknown>; firstRow?: number },
+): Promise<ImportResult | { error: string }> {
   // The campaign must be this organization's: another organization's id is simply not found.
   const [campaign] = await db
     .select({ id: outreachCampaigns.id })
@@ -285,7 +307,7 @@ export async function importLeadsForCampaign(
   );
 
   const { workItems, imported, skippedSuppressed, skippedDuplicate, failed } =
-    planEmailCampaignImport(rows, suppressed, existing);
+    planEmailCampaignImport(rows, suppressed, existing, run.firstRow);
 
   await withLeadTransaction(async (tx) => {
     for (const { row, enroll } of workItems) {
@@ -312,15 +334,11 @@ export async function importLeadsForCampaign(
 
     await tx.insert(importRuns).values({
       organizationId: currentOrganizationId(),
-      source: "file",
-      filename: options.filename ?? null,
+      source: run.source,
+      filename: run.filename,
       destination: "campaign",
       destinationCampaignId: campaignId,
-      mapping: {
-        mode: options.mapping ? "explicit-column-mapping" : "legacy-email-auto-map",
-        mapped: options.mapping ?? ["email", "linkedinUrl", "firstName", "lastName", "title", "company", "domain"],
-        extra: "people.raw",
-      },
+      mapping: run.mapping,
       stats: { total: rows.length, imported, skippedSuppressed, skippedDuplicate, failed: failed.length },
     });
   });

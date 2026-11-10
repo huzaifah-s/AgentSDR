@@ -38,6 +38,7 @@ describe("People migration operational controls", () => {
     expect(migrationMutationBlockReason("/api/outreach/campaigns/abc", "PATCH", env)).toBeString();
     expect(migrationMutationBlockReason("/api/linkedin/messages/send", "POST", env)).toBeString();
     expect(migrationMutationBlockReason("/api/outreach/inbox/drafts/abc/approve", "POST", env)).toBeString();
+    expect(migrationMutationBlockReason("/api/v1/campaigns/abc/leads", "POST", env)).toBeString();
     expect(migrationMutationBlockReason("/api/webhooks/message-received", "POST", env)).toBeNull();
     expect(migrationMutationBlockReason("/api/outreach/webhooks/gmail-watch", "POST", env)).toBeNull();
     expect(migrationMutationBlockReason("/api/outreach/unsubscribe", "POST", env)).toBeNull();

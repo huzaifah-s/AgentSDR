@@ -3,6 +3,7 @@ import "server-only";
 import { INTEGRATIONS } from "../catalog";
 import { APOLLO_HANDLERS } from "../apollo/actions";
 import { CLEANLIST_HANDLERS } from "../cleanlist/actions";
+import { COMPANYENRICH_HANDLERS } from "../companyenrich/actions";
 import { CONTACTOUT_HANDLERS } from "../contactout/actions";
 import { FINDYMAIL_HANDLERS } from "../findymail/actions";
 import { FULLENRICH_HANDLERS } from "../fullenrich/actions";
@@ -21,6 +22,7 @@ import type { IntegrationActionHandler, IntegrationActionHandlers } from "./type
 const HANDLERS: IntegrationActionHandlers = {
   ...APOLLO_HANDLERS,
   ...CLEANLIST_HANDLERS,
+  ...COMPANYENRICH_HANDLERS,
   ...SNOV_HANDLERS,
   ...MILLIONVERIFIER_HANDLERS,
   ...CONTACTOUT_HANDLERS,

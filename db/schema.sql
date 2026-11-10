@@ -923,6 +923,22 @@ CREATE TABLE public.accounts (
 );
 
 --
+-- Name: api_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    organization_id uuid NOT NULL,
+    name text NOT NULL,
+    key_prefix text NOT NULL,
+    key_hash text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone
+);
+
+--
 -- Name: call_campaign_contacts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -950,6 +966,8 @@ CREATE TABLE public.call_campaign_contacts (
     ai_note text,
     ai_booked_at timestamp with time zone,
     ai_instructions text,
+    ai_meeting_at timestamp with time zone,
+    ai_booking_code text,
     CONSTRAINT call_campaign_contacts_ai_status_chk CHECK (((ai_status IS NULL) OR (ai_status = ANY (ARRAY['queued'::text, 'reaching'::text, 'callback'::text, 'chasing'::text, 'booked'::text, 'handoff'::text, 'not_interested'::text, 'unreached'::text, 'replied'::text, 'stopped'::text, 'failed'::text])))),
     CONSTRAINT call_campaign_contacts_call_count_chk CHECK ((call_count >= 0)),
     CONSTRAINT call_campaign_contacts_call_status_chk CHECK ((call_status = ANY (ARRAY['new'::text, 'calling'::text, 'no_answer'::text, 'busy'::text, 'connected'::text, 'not_on_whatsapp'::text, 'wrong_number'::text, 'failed'::text]))),
@@ -2827,6 +2845,13 @@ ALTER TABLE ONLY public.accounts
     ADD CONSTRAINT accounts_pkey PRIMARY KEY (id);
 
 --
+-- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
+
+--
 -- Name: call_campaign_contacts call_campaign_contacts_campaign_person_uq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3842,6 +3867,24 @@ CREATE INDEX "WebhookEvent_retry_idx" ON public."WebhookEvent" USING btree ("pro
 --
 
 CREATE INDEX accounts_user_id_idx ON public.accounts USING btree (user_id);
+
+--
+-- Name: api_keys_key_hash_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_keys_key_hash_uq ON public.api_keys USING btree (key_hash);
+
+--
+-- Name: api_keys_organization_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_keys_organization_idx ON public.api_keys USING btree (organization_id);
+
+--
+-- Name: call_campaign_contacts_ai_booking_code_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX call_campaign_contacts_ai_booking_code_uq ON public.call_campaign_contacts USING btree (ai_booking_code) WHERE (ai_booking_code IS NOT NULL);
 
 --
 -- Name: call_campaign_contacts_ai_due_idx; Type: INDEX; Schema: public; Owner: -
@@ -5102,6 +5145,20 @@ ALTER TABLE ONLY public."WebhookEvent"
 
 ALTER TABLE ONLY public.accounts
     ADD CONSTRAINT accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+--
+-- Name: api_keys api_keys_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+--
+-- Name: api_keys api_keys_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
 
 --
 -- Name: call_campaign_contacts call_campaign_contacts_ai_station_fk; Type: FK CONSTRAINT; Schema: public; Owner: -

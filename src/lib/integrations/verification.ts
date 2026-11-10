@@ -2,6 +2,7 @@ import "server-only";
 
 import { verifyApolloCredentials } from "./apollo/verify";
 import { verifyCleanlistCredentials } from "./cleanlist/verify";
+import { verifyCompanyEnrichCredentials } from "./companyenrich/verify";
 import { verifyContactOutCredentials } from "./contactout/verify";
 import { verifyFindymailCredentials } from "./findymail/verify";
 import { verifyFullEnrichCredentials } from "./fullenrich/verify";
@@ -19,6 +20,7 @@ import { verifyZeroBounceCredentials } from "./zerobounce/verify";
 const VERIFIERS: Record<string, (credentials: Record<string, string>) => Promise<void>> = {
   apollo: verifyApolloCredentials,
   cleanlist: verifyCleanlistCredentials,
+  companyenrich: verifyCompanyEnrichCredentials,
   snov: verifySnovCredentials,
   millionverifier: verifyMillionVerifierCredentials,
   contactout: verifyContactOutCredentials,

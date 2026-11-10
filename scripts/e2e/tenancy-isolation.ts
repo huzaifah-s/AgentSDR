@@ -24,6 +24,9 @@
  *    afterwards.
  * 4. Pages: B loads every page (dynamic ones with A ids); no A identifier may
  *    appear in the HTML.
+ * 5. Public API: A and B each create an API key. A's key must see A's
+ *    campaigns (control); B's key must see none of A's data, and adding leads
+ *    to or stopping leads in A's campaign must be a 404 that changes nothing.
  *
  * Needs: INITIAL_OWNER_EMAIL / INITIAL_OWNER_PASSWORD (organization A's owner),
  * and the server under test started with AUTH_SIGNUP=open, so the test can
@@ -192,6 +195,8 @@ const PARAM_TABLE: [RegExp, Record<string, string>][] = [
   [/^\/api\/linkedin\/search\/queue\//, { id: "SearchQuery" }],
   [/^\/api\/webhooks\//, { id: "WebhookEvent" }],
   [/^\/api\/outreach\/campaigns\//, { id: "outreach_campaigns", leadId: "outreach_leads" }],
+  [/^\/api\/v1\/campaigns\//, { id: "outreach_campaigns" }],
+  [/^\/api\/settings\/api-keys\//, { id: "api_keys" }],
   [/^\/api\/outreach\/inbox\/leads\//, { id: "crm_leads" }],
   [/^\/api\/outreach\/inbox\/messages\//, { id: "crm_messages" }],
   [/^\/api\/outreach\/inbox\/drafts\//, { id: "crm_email_drafts" }],
@@ -260,6 +265,84 @@ function pages(): string[] {
 async function rowSnapshot(table: string, id: string): Promise<string> {
   const rows = await sql.unsafe(`select * from ${quote(table)} where id::text = $1`, [id]);
   return JSON.stringify(rows);
+}
+
+// ------------------------------------------------------------ public API
+
+type Call = (s: Session, method: string, url: string, body?: unknown) => Promise<{ status: number; text: string }>;
+
+async function createApiKey(call: Call, session: Session): Promise<string> {
+  const res = await call(session, "POST", "/api/settings/api-keys", { name: `isolation-${session.label}` });
+  if (res.status !== 201) throw new Error(`${session.label}: could not create an API key (${res.status}) ${res.text}`);
+  return (JSON.parse(res.text) as { key: string }).key;
+}
+
+async function withKey(key: string, method: string, url: string, body?: unknown): Promise<{ status: number; text: string }> {
+  return fetch(`${BASE}${url}`, {
+    method,
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    redirect: "manual",
+    signal: AbortSignal.timeout(60_000),
+  }).then(async (res) => ({ status: res.status, text: await res.text() }))
+    .catch((error: Error) => ({ status: 0, text: String(error.message) }));
+}
+
+async function campaignSnapshot(campaignId: string): Promise<string> {
+  const rows = await sql`
+    select l.id, l.sequence_status, l.next_send_at, l.updated_at from outreach_leads l
+     where l.campaign_id = ${campaignId} order by l.id`;
+  return JSON.stringify(rows);
+}
+
+async function checkPublicApi(
+  call: Call,
+  sessionA: Session,
+  sessionB: Session,
+  idsByTable: Map<string, string[]>,
+  markers: Set<string>,
+  findings: Finding[],
+): Promise<number> {
+  const keyA = await createApiKey(call, sessionA);
+  const keyB = await createApiKey(call, sessionB);
+  const campaignA = idsByTable.get("outreach_campaigns")?.[0];
+  let calls = 0;
+
+  const listA = await withKey(keyA, "GET", "/api/v1/campaigns");
+  calls++;
+  if (campaignA && !listA.text.includes(campaignA)) {
+    findings.push({ kind: "CONTROL", where: "GET /api/v1/campaigns (A's key)", detail: `A's key did not see A's campaign (${listA.status})` });
+  }
+
+  const listB = await withKey(keyB, "GET", "/api/v1/campaigns");
+  calls++;
+  const leaked = leaksIn(listB.text, markers);
+  if (leaked.length) findings.push({ kind: "READ LEAK", where: `GET /api/v1/campaigns (B's key) → ${listB.status}`, detail: leaked.slice(0, 3).join(", ") });
+
+  if (campaignA) {
+    const [lead] = await sql<{ email: string }[]>`
+      select p.email from outreach_leads l join people p on p.id = l.person_id
+       where l.campaign_id = ${campaignA} and p.email is not null limit 1`;
+    const attempts: [string, unknown][] = [
+      [`/api/v1/campaigns/${campaignA}/leads`, { leads: [{ email: `isolation-${Date.now()}@example.test` }] }],
+      [`/api/v1/campaigns/${campaignA}/leads/stop`, { emails: [lead?.email ?? "nobody@example.test"] }],
+    ];
+    for (const [url, body] of attempts) {
+      const before = await campaignSnapshot(campaignA);
+      const res = await withKey(keyB, "POST", url, body);
+      const after = await campaignSnapshot(campaignA);
+      calls++;
+      if (before !== after) findings.push({ kind: "WRITE LEAK", where: `POST ${url} (B's key) → ${res.status}`, detail: "A's campaign leads changed" });
+      else if (res.status !== 404) findings.push({ kind: "WRITE 2xx", where: `POST ${url} (B's key)`, detail: `expected 404, got ${res.status}` });
+      const responseLeak = leaksIn(res.text, markers, url);
+      if (responseLeak.length) findings.push({ kind: "WRITE RESPONSE LEAK", where: `POST ${url} (B's key)`, detail: responseLeak.slice(0, 3).join(", ") });
+    }
+  }
+
+  const noKey = await withKey("asdr_not-a-real-key", "GET", "/api/v1/campaigns");
+  calls++;
+  if (noKey.status !== 401) findings.push({ kind: "WRITE 2xx", where: "GET /api/v1/campaigns (bad key)", detail: `expected 401, got ${noKey.status}` });
+  return calls;
 }
 
 // ------------------------------------------------------------------ run
@@ -364,7 +447,10 @@ async function main() {
     if (leaked.length) findings.push({ kind: "PAGE LEAK", where: `${target.url} → ${res.status}`, detail: leaked.slice(0, 3).join(", ") });
   }
 
-  console.log(`checked: ${reads} reads, ${writes} writes, ${pageCount} pages as B`);
+  // 5. The public API, called with API keys instead of a session.
+  const apiCalls = await checkPublicApi(call, sessionA, sessionB, idsByTable, markers, findings);
+
+  console.log(`checked: ${reads} reads, ${writes} writes, ${pageCount} pages as B, ${apiCalls} public API calls`);
   const order = ["CONTROL", "WRITE LEAK", "READ LEAK", "PAGE LEAK", "WRITE RESPONSE LEAK", "WRITE 2xx", "READ 2xx", "ERROR"];
   findings.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
   for (const f of findings) console.log(`${f.kind.padEnd(20)} ${f.where}\n${" ".repeat(21)}${f.detail}`);

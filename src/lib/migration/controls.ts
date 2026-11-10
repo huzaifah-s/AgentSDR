@@ -63,6 +63,7 @@ const BLOCKED_MUTATION_PREFIXES = [
   "/api/outreach/campaigns",
   "/api/outreach/inbox/", // manual Email replies and draft approvals
   "/api/outreach/mailboxes/", // mailbox edits and test sends
+  "/api/v1/campaigns", // the public API's lead imports and stops
 ] as const;
 
 /**

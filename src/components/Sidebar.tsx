@@ -331,7 +331,7 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
         {/* Brand + collapse */}
         <div className={cn("flex h-14 shrink-0 items-center", collapsed ? "justify-center" : "justify-between pl-4 pr-2.5")}>
           {!collapsed && (
-            <Link href="/analytics" aria-label="AgentSDR home" className="group rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-base">
+            <Link href="/analytics" aria-label="Braintree Reach home" className="group rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-base">
               <Logo className="text-text-strong-950" walk="step" walkOn="hover" />
             </Link>
           )}
@@ -353,7 +353,7 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
           </div>
           {/* Collapsed, the brand stays as Shade's icon, linking home. */}
           {collapsed && (
-            <Link href="/analytics" aria-label="AgentSDR home" className="group rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-base">
+            <Link href="/analytics" aria-label="Braintree Reach home" className="group rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-base">
               <AppIcon small className="size-7" walk="step" walkOn="hover" />
             </Link>
           )}

@@ -81,10 +81,10 @@ export function SignUpForm({ googleEnabled, from, inviteOnly = false }: { google
   }
 
   return (
-    <AuthShell title="Create your AgentSDR account" footer={footer}>
+    <AuthShell title="Create your Braintree Reach account" footer={footer}>
       {inviteOnly && (
         <div className="mb-5">
-          <InfoCallout>This AgentSDR instance is invite-only. Sign up with the email address your invitation was sent to.</InfoCallout>
+          <InfoCallout>This Braintree Reach instance is invite-only. Sign up with the email address your invitation was sent to.</InfoCallout>
         </div>
       )}
       <form onSubmit={submit} className="flex flex-col gap-5">

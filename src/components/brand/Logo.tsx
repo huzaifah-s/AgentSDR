@@ -1,13 +1,13 @@
 import { cn } from "@/utils/cn";
 import { brandDisplayClass } from "./font";
+import { BraintreeMark } from "./BraintreeMark";
 import { Mascot } from "./Mascot";
 import type { MascotCycle } from "./mascotFrames";
 
 /**
- * The AgentSDR logo — the one source for the app chrome and the login
- * screen. The mascot's pixels live in ./mascotFrames.ts; the favicon
- * (src/app/icon.svg, apple-icon.png) and the recorder extension's icons are
- * this same tile drawn as static files; change them together.
+ * The Braintree Reach logo — the one source for the app chrome and the login
+ * screen. The tree is ./BraintreeMark.tsx; the favicon (src/app/icon.svg,
+ * apple-icon.png) is the same tree drawn as static files; change them together.
  */
 
 /** The icon tile's corner radius. */
@@ -17,27 +17,20 @@ export const ICON_RADIUS = "14%";
 export type Walk = { walk?: MascotCycle; walkOn?: "always" | "hover" };
 
 /**
- * Shade, the mascot, on a glass app tile. `small` trims the glow for header
- * and footer sizes, where the headline's halo would read as a blur. `walk`
- * animates it (see Mascot); without it the tile is the still logo.
+ * The Braintree tree on a solid tile that inverts with the theme (dark tile,
+ * light tree; light tile, dark tree in dark mode), like SecureTrace's mark.
+ * `small`, `walk` and `walkOn` are kept so callers stay unchanged; the tree
+ * does not animate.
  */
-export function AppIcon({ className, small = false, walk, walkOn = "always" }: { className?: string; small?: boolean } & Walk) {
+export function AppIcon({ className }: { className?: string; small?: boolean } & Walk) {
   return (
     <span
       aria-hidden="true"
-      className={cn(
-        "relative inline-flex shrink-0 items-center justify-center overflow-hidden bg-gradient-to-b from-[#5b7bff] to-[#1f3bad]",
-        small
-          ? "shadow-[inset_0_1px_0_rgb(255_255_255/0.35),inset_0_0_0_1px_rgb(255_255_255/0.18),0_2px_8px_-2px_rgb(51_92_255/0.55)]"
-          : "shadow-[inset_0_1px_0_rgb(255_255_255/0.35),inset_0_0_0_1px_rgb(255_255_255/0.18),0_8px_24px_-6px_rgb(51_92_255/0.8)]",
-        className,
-      )}
+      className={cn("relative inline-flex shrink-0 items-center justify-center bg-bg-strong-950 text-text-white-0", className)}
       // A square tile with gently rounded corners, not an app-store squircle.
       style={{ borderRadius: ICON_RADIUS }}
     >
-      {/* Soft grid on the icon face, like a glass app tile. */}
-      <span className="absolute inset-0 bg-[linear-gradient(rgb(255_255_255/0.08)_1px,transparent_1px),linear-gradient(90deg,rgb(255_255_255/0.08)_1px,transparent_1px)] bg-[size:25%_25%]" />
-      <Mascot cycle={walk} play={walkOn} className="relative size-[62%] text-white drop-shadow-[0_1px_1px_rgb(11_10_26/0.35)]" />
+      <BraintreeMark className="size-[62%]" />
     </span>
   );
 }
@@ -55,8 +48,6 @@ export function Logo({
   className,
   iconClassName = "size-7",
   textClassName = "text-[19px]",
-  walk,
-  walkOn,
 }: {
   className?: string;
   iconClassName?: string;
@@ -64,8 +55,8 @@ export function Logo({
 } & Walk) {
   return (
     <span className={cn("inline-flex items-center gap-2.5", className)}>
-      <AppIcon small className={iconClassName} walk={walk} walkOn={walkOn} />
-      <span className={cn(brandDisplayClass, "leading-none tracking-[-0.025em]", textClassName)}>AgentSDR</span>
+      <AppIcon small className={iconClassName} />
+      <span className={cn(brandDisplayClass, "whitespace-nowrap leading-none tracking-[-0.025em]", textClassName)}>Braintree Reach</span>
     </span>
   );
 }

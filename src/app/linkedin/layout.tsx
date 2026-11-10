@@ -7,8 +7,8 @@ import { RequiresPlatform } from "@/components/settings/RequiresPlatform";
  */
 export const metadata: Metadata = {
   title: {
-    default: "LinkedIn · AgentSDR",
-    template: "%s · LinkedIn · AgentSDR",
+    default: "LinkedIn · Braintree Reach",
+    template: "%s · LinkedIn · Braintree Reach",
   },
   description: "LinkedIn outreach automation",
 };

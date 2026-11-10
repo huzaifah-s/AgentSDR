@@ -40,7 +40,7 @@ async function initialOrganizationId(userId: string): Promise<string | null> {
 }
 
 export const auth = betterAuth({
-  appName: "AgentSDR",
+  appName: "Braintree Reach",
   baseURL,
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins: baseURL ? [baseURL] : [],
@@ -60,8 +60,8 @@ export const auth = betterAuth({
       void sendAuthEmail(
         authEmail({
           to: user.email,
-          subject: "Reset your AgentSDR password",
-          intro: "Someone asked to reset the password for this AgentSDR account.",
+          subject: "Reset your Braintree Reach password",
+          intro: "Someone asked to reset the password for this Braintree Reach account.",
           action: "Choose a new password",
           url,
         }),
@@ -76,8 +76,8 @@ export const auth = betterAuth({
       void sendAuthEmail(
         authEmail({
           to: user.email,
-          subject: "Confirm your email for AgentSDR",
-          intro: `Welcome to AgentSDR, ${user.name}. Confirm this is your email address to finish creating your account.`,
+          subject: "Confirm your email for Braintree Reach",
+          intro: `Welcome to Braintree Reach, ${user.name}. Confirm this is your email address to finish creating your account.`,
           action: "Confirm email",
           url,
         }),
@@ -116,7 +116,7 @@ export const auth = betterAuth({
         before: async (user) => {
           if (!(await mayCreateAccount(user.email))) {
             throw new APIError("FORBIDDEN", {
-              message: "Sign-up on this AgentSDR instance is by invitation only. Ask an admin to invite you.",
+              message: "Sign-up on this Braintree Reach instance is by invitation only. Ask an admin to invite you.",
             });
           }
         },
@@ -146,8 +146,8 @@ export const auth = betterAuth({
         void sendAuthEmail(
           authEmail({
             to: email,
-            subject: `${inviter.user.name} invited you to ${organization.name} on AgentSDR`,
-            intro: `${inviter.user.name} (${inviter.user.email}) invited you to join ${organization.name} on AgentSDR.`,
+            subject: `${inviter.user.name} invited you to ${organization.name} on Braintree Reach`,
+            intro: `${inviter.user.name} (${inviter.user.email}) invited you to join ${organization.name} on Braintree Reach.`,
             action: "Accept invitation",
             url: `${baseURL}/accept-invitation/${id}`,
             outro: "This invitation expires in 7 days. If you weren't expecting it, you can ignore this email.",

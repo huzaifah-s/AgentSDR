@@ -5,8 +5,8 @@ import { docsPageUrl } from "@/lib/support";
 /** WhatsApp message campaigns share the padded, scrolling surface of the calling pages. */
 export const metadata: Metadata = {
   title: {
-    default: "WhatsApp · AgentSDR",
-    template: "%s · WhatsApp · AgentSDR",
+    default: "WhatsApp · Braintree Reach",
+    template: "%s · WhatsApp · Braintree Reach",
   },
   description: "Message leads over WhatsApp and follow up",
 };

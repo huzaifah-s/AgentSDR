@@ -11,8 +11,8 @@ import type { Metadata } from "next";
  */
 export const metadata: Metadata = {
   title: {
-    default: "WhatsApp Calling · AgentSDR",
-    template: "%s · WhatsApp Calling · AgentSDR",
+    default: "WhatsApp Calling · Braintree Reach",
+    template: "%s · WhatsApp Calling · Braintree Reach",
   },
   description: "Call leads over WhatsApp and follow up",
 };

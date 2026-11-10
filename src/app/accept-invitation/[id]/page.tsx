@@ -92,7 +92,7 @@ export default function AcceptInvitationPage({ params }: { params: Promise<{ id:
     return (
       <AuthShell title="Invitation declined" subtitle="You won't be added to this organization.">
         <Link href="/" className={linkClass}>
-          Go to AgentSDR
+          Go to Braintree Reach
         </Link>
       </AuthShell>
     );

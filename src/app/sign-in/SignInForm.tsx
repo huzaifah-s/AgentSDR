@@ -7,18 +7,20 @@ import { AuthShell } from "@/components/auth/AuthShell";
 import { ErrorCallout, Field, InfoCallout, SecondaryButton, SubmitButton, linkClass, quietLinkClass } from "@/components/auth/fields";
 import { GoogleButton, OrDivider } from "@/components/auth/GoogleButton";
 
-const ACCESS_REQUEST_TO = "pulkit@kandid.ai";
+// Fork: invite requests go to this deployment's admin, not upstream's founder.
+// Set NEXT_PUBLIC_ACCESS_REQUEST_EMAIL; unset, the mail opens with no recipient.
+const ACCESS_REQUEST_TO = process.env.NEXT_PUBLIC_ACCESS_REQUEST_EMAIL ?? "";
 
-/** A mailto asking for an account on AgentSDR Managed, carrying the email typed into the form when there is one. */
+/** A mailto asking this deployment's admin for an invite, carrying the email typed into the form when there is one. */
 function accessRequestHref(email: string) {
   const body = [
-    "Hi Pulkit,",
+    "Hi,",
     "",
-    "I'd like to use AgentSDR Managed rather than self-host it. Could you send me an invite?",
+    "Could you send me an invite to Braintree Reach?",
     "",
     `Work email: ${email.trim()}`,
   ].join("\n");
-  const subject = "I need access to AgentSDR Managed";
+  const subject = "Invite to Braintree Reach";
   return `mailto:${ACCESS_REQUEST_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
@@ -70,7 +72,7 @@ export function SignInForm({
 
   return (
     <AuthShell
-      title="Sign in to AgentSDR"
+      title="Sign in to Braintree Reach"
       footer={
         signupAvailable ? (
           <>

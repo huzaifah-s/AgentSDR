@@ -70,6 +70,8 @@ export const SCOPED_TABLES: readonly ScopedTable[] = [
   snake("station_message_jobs"),
   snake("whatsapp_accounts"),
   snake("whatsapp_campaigns"),
+  // LinkedIn posts (snake_case, this app's own)
+  snake("linkedin_posts"),
   // LinkedIn (ex-Prisma, camelCase columns)
   pascal("LinkedInAccount"),
   pascal("Campaign"),
@@ -143,7 +145,8 @@ export const GLOBAL: readonly string[] = [
  * contract step, once no code's ON CONFLICT targets it.
  *
  * Provider identities stay globally unique on purpose — a Unipile account,
- * LinkedIn id, Gmail mailbox or provider message id belongs to exactly one
+ * LinkedIn id, Gmail mailbox, provider message id or published LinkedIn post
+ * id (linkedin_posts_provider_post_id_uq) belongs to exactly one
  * organization, and inbound webhooks find the organization through them.
  */
 export const PER_ORG_UNIQUES: readonly { table: string; name: string; global: string; definition: string }[] = [

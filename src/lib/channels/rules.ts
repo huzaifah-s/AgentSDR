@@ -252,6 +252,19 @@ export const CHANNEL_RULES = {
       safe: { below: 15 },
       warning: "Follow-ups less than 15 minutes apart from one account look automated.",
     },
+    {
+      // Read by the post publisher (src/lib/linkedin/posts/publish.ts).
+      key: "postsPerDay",
+      kind: "number",
+      label: "Posts per day, per account",
+      help: "How many posts one LinkedIn account publishes a day, counted in your organization's day (Settings → Organization).",
+      unit: "posts / day",
+      default: 2,
+      min: 1,
+      max: 10,
+      safe: { above: 3 },
+      warning: "More than a few posts a day from one person looks automated and buries each post.",
+    },
   ],
   whatsapp: [
     {

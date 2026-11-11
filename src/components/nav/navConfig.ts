@@ -11,6 +11,7 @@ import {
   RiInboxLine,
   RiLinkM,
   RiMegaphoneLine,
+  RiQuillPenLine,
   RiChatSmile2Line,
   RiPhoneLine,
   RiSearchLine,
@@ -110,6 +111,7 @@ export const NAV_SECTIONS: NavSection[] = [
         color: HUE.blue,
         children: [
           link("/linkedin/campaigns", "Campaigns", RiMegaphoneLine),
+          link("/linkedin/posts", "Posts", RiQuillPenLine),
           link("/linkedin/messages", "Messages", RiChat3Line),
           link("/linkedin/search", "Search", RiSearchLine),
         ],

@@ -117,6 +117,7 @@ const OWNED_TABLES = [
   "whatsapp_campaigns",
   "whatsapp_chats",
   "whatsapp_messages",
+  "linkedin_posts",
 ];
 
 export default {

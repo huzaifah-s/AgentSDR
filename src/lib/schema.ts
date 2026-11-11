@@ -30,6 +30,9 @@ export * from "./scheduler/schema";
 // API keys for the public API (/api/v1/*, src/lib/publicApi/).
 export * from "./publicApi/schema";
 
+// LinkedIn posts written and published from AgentSDR (src/lib/linkedin/posts/).
+export * from "./linkedin/posts/schema";
+
 // Better Auth: users, sessions, accounts, verifications, organizations,
 // members, invitations, teams, team_members.
 export * from "./auth/schema";

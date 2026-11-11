@@ -5,7 +5,8 @@ Status: planned (11 Nov 2026), nothing built.
 Decided (11 Nov 2026): posts go out on the person's own profile only
 (decision 1a); any member may post from any of the organization's
 accounts, with who wrote and who published recorded (2a); phases in the
-order below (3). A business content brief follows v1 as Phase 5.
+order below (3). A business content brief and each person's writing voice
+follow v1 as Phase 5.
 
 ## Goal
 
@@ -159,6 +160,7 @@ that, not from guesses.
   (`users.getAllPosts`, the account's own provider id). Cached 1 h per
   (organization, account); without them the prompt says so and asks for a
   plain, first-person voice. The author's `name` and `headline` go in too.
+  Phase 5 adds the person's own stated preferences on top.
 - **Output**: 3 variants, each `{ body }`, ≤ 3,000 characters, checked in
   `accept` so an off-schema answer is retried. The rep picks one, and it
   fills the editor as a draft (`source`, `generation` recorded).
@@ -264,10 +266,46 @@ has none yet.
 - **Post ideas**: with pillars written down, "Suggest ideas" on the Posts
   page proposes 5 ideas (pillar × public Knowledge × Phase 4 themes); each
   opens as a draft. One prompt, `linkedin/post-ideas`.
-- **Per-author notes** (what this person posts about, how they write) are
-  better learned from their past posts (Phase 2). If that falls short, a
-  notes field per account needs a column on `"LinkedInAccount"`, an
-  ex-Prisma table: a separate change.
+### Each person's writing voice
+
+The brief is the organization's; how a person talks is their own. The CEO
+and an SDR posting about the same pillar should not sound alike.
+
+- **Per LinkedIn account, not per user.** A post goes out as the profile's
+  person, and `"LinkedInAccount"` has no owner user (decision 2), so the
+  voice belongs to the account.
+- **Where it is edited**: Settings → LinkedIn accounts, a "Writing voice"
+  dialog on each account, beside the invitation limit and working hours
+  dialogs (`src/components/linkedin/AccountsClient.tsx`). The composer shows
+  the chosen account's voice in one line, with an Edit link to the same
+  dialog. Any member may edit it (decision 2); `updated_by` is kept.
+- **What it holds**:
+  - **Titled blocks** (`AiInstructionBlock[]`, the same editor as the
+    brief), starting empty with hints: *How I sound* (casual or formal,
+    short sentences, humour), *Format* (length, line breaks, emoji,
+    hashtags, lists), *Language* (which language, US or UK spelling),
+    *Phrases I use / never use*, *What I talk about*.
+  - **Example posts**: up to 5 pasted posts that sound like this person
+    (their own or anyone's), each ≤ 3,000 characters. Used beside the past
+    posts Phase 2 reads.
+  - **"Learn from my posts"**: one model call (`linkedin/voice-summary`)
+    reads the account's last ~20 posts and fills the blocks as a
+    suggestion. Nothing is saved until the person edits and saves it.
+- **Storage**: a new scoped table `linkedin_author_voices`, one row per
+  (organization, `linkedin_account_id`), unique on that pair:
+  `instructions` jsonb (null = none), `example_posts` jsonb (text array),
+  `updated_by`, timestamps. Migration
+  `scripts/create-linkedin-author-voices.ts`, schema in
+  `src/lib/linkedin/posts/schema.ts`; `OWNED_TABLES` and the tenancy
+  registry as for `linkedin_posts`. A table of our own rather than a column
+  on `"LinkedInAccount"`: the ex-Prisma schema stays untouched, and the
+  change stays in our files.
+- **How the layers combine in the prompt**, in this order: the
+  organization's brief → the author's voice → the notes on this one draft.
+  The brief's *What we never post* always wins. The author's voice decides
+  tone and format over the brief's *How we sound*. A draft's own notes
+  ("make this one formal") win over the author's defaults for that post.
+  Both reach the prompt as variables (`{{authorVoice}}`, `{{postInstructions}}`).
 
 ## Decisions
 
@@ -302,6 +340,9 @@ has none yet.
   `as_organization_id` column and a page picker.
 - **Documents (carousels) and video**: Unipile accepts both
   (`document_title`, `video_thumbnail`).
+- **The same voice in CRM drafts** sent from that LinkedIn account. It
+  would need a change to `buildDraftPrompt` (`src/lib/crm/ai/draft.ts`), a
+  core upstream file, so it waits until posts have proven the voice.
 - A docs page, `docs/linkedin/posts.mdx`.
 
 ## Risks

@@ -6,6 +6,8 @@ import * as Button from "@/components/alignui/button";
 import * as Modal from "@/components/alignui/modal";
 import * as Textarea from "@/components/alignui/textarea";
 import { FormError, TextField } from "@/components/calls/fields";
+import { CompanyNameField } from "@/components/calling/CompanyNameField";
+import { inferCompanyDomainFromEmail, parseCompanyDomain } from "@/lib/leads/identity";
 
 type Fields = {
   firstName: string;
@@ -24,19 +26,49 @@ type CreateResult = { personId: string; created: boolean; phone: string | null }
 const EMPTY: Fields = { firstName: "", lastName: "", email: "", linkedinUrl: "", phone: "", title: "", companyName: "", companyDomain: "", notes: "" };
 
 /**
+ * Where the person's company will end up, by the rules `upsertPerson` applies
+ * to every source: a company exists only with a domain — the one given, or the
+ * work email's when only a name is — and the person is linked to it; a name
+ * with no domain is kept on the person as text.
+ */
+function companyOutcome(fields: Fields): { tone: "linked" | "text" | "error"; message: string } | null {
+  const name = fields.companyName.trim();
+  const typedDomain = fields.companyDomain.trim();
+  if (typedDomain) {
+    const domain = parseCompanyDomain(typedDomain);
+    return domain
+      ? { tone: "linked", message: `Linked to the company ${domain}${name ? "" : " (created if new)"}.` }
+      : { tone: "error", message: "Enter a domain like acme.com, or leave it empty." };
+  }
+  if (!name) return null;
+  const fromEmail = inferCompanyDomainFromEmail(fields.email);
+  return fromEmail
+    ? { tone: "linked", message: `Linked to the company ${fromEmail}, from the email address.` }
+    : { tone: "text", message: "Kept on the person as text only. Add the company's domain to link them to it." };
+}
+
+/**
  * One person typed by hand, through the same path as a sheet import
  * (`POST /api/leads/people` → `upsertManualPerson`): an existing person with
  * that email or LinkedIn profile is updated, not duplicated, and no CRM record
  * is created — that begins with a reply or a call, as for imported people.
+ * `company` prefills the company (from Add company → "Save and add a person").
  */
-export function AddPersonModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [fields, setFields] = useState<Fields>(EMPTY);
+export function AddPersonModal({ onClose, onSaved, company }: {
+  onClose: () => void;
+  onSaved: () => void;
+  company?: { name: string | null; domain: string };
+}) {
+  const initial: Fields = company ? { ...EMPTY, companyName: company.name ?? "", companyDomain: company.domain } : EMPTY;
+  const [fields, setFields] = useState<Fields>(initial);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<{ name: string; created: boolean; phoneDropped: boolean } | null>(null);
 
   const set = (key: keyof Fields) => (value: string) => setFields((current) => ({ ...current, [key]: value }));
   const hasIdentity = Boolean(fields.email.trim() || fields.linkedinUrl.trim());
+  const outcome = companyOutcome(fields);
+  const canSave = hasIdentity && outcome?.tone !== "error";
 
   async function submit(event: React.FormEvent, addAnother: boolean) {
     event.preventDefault();
@@ -54,7 +86,8 @@ export function AddPersonModal({ onClose, onSaved }: { onClose: () => void; onSa
       const result = { name, created: Boolean(data.created), phoneDropped: Boolean(fields.phone.trim()) && !data.phone };
       onSaved();
       if (addAnother) {
-        setFields(EMPTY);
+        // The next person is usually a colleague: keep the company.
+        setFields({ ...EMPTY, companyName: fields.companyName, companyDomain: fields.companyDomain });
         setSaved(result);
       } else if (result.phoneDropped) {
         // Keep the modal open so the warning is seen; the person is saved.
@@ -83,9 +116,19 @@ export function AddPersonModal({ onClose, onSaved }: { onClose: () => void; onSa
               <TextField label="LinkedIn URL" value={fields.linkedinUrl} onChange={set("linkedinUrl")} placeholder="linkedin.com/in/…" autoComplete="off" />
               <TextField label="Phone (optional)" type="tel" value={fields.phone} onChange={set("phone")} placeholder="+91 98765 43210" autoComplete="off" />
               <TextField label="Job title (optional)" value={fields.title} onChange={set("title")} autoComplete="off" />
-              <TextField label="Company (optional)" value={fields.companyName} onChange={set("companyName")} autoComplete="off" />
+              <CompanyNameField
+                label="Company (optional)"
+                value={fields.companyName}
+                onChange={set("companyName")}
+                onPick={(picked) => setFields((current) => ({ ...current, companyName: picked.name ?? "", companyDomain: picked.domain }))}
+              />
               <TextField label="Company domain (optional)" value={fields.companyDomain} onChange={set("companyDomain")} placeholder="company.com" autoComplete="off" />
             </div>
+            {outcome && (
+              <p className={outcome.tone === "error" ? "-mt-2 text-paragraph-xs text-error-base" : outcome.tone === "text" ? "-mt-2 text-paragraph-xs text-warning-base" : "-mt-2 text-paragraph-xs text-text-sub-600"}>
+                {outcome.message}
+              </p>
+            )}
             <div>
               <label htmlFor="add-person-notes" className="mb-1.5 block text-label-sm text-text-strong-950">Notes <span className="text-text-soft-400">(optional)</span></label>
               <Textarea.Root id="add-person-notes" simple rows={2} value={fields.notes} onChange={(event) => set("notes")(event.target.value)} />
@@ -100,8 +143,8 @@ export function AddPersonModal({ onClose, onSaved }: { onClose: () => void; onSa
           </Modal.Body>
           <Modal.Footer>
             <Button.Root type="button" variant="neutral" mode="stroke" size="small" onClick={onClose}>{saved ? "Done" : "Cancel"}</Button.Root>
-            <Button.Root type="button" variant="neutral" mode="stroke" size="small" disabled={!hasIdentity || submitting} onClick={(event) => void submit(event, true)}>Save and add another</Button.Root>
-            <Button.Root type="submit" variant="primary" mode="filled" size="small" disabled={!hasIdentity || submitting}>{submitting ? "Saving…" : "Save"}</Button.Root>
+            <Button.Root type="button" variant="neutral" mode="stroke" size="small" disabled={!canSave || submitting} onClick={(event) => void submit(event, true)}>Save and add another</Button.Root>
+            <Button.Root type="submit" variant="primary" mode="filled" size="small" disabled={!canSave || submitting}>{submitting ? "Saving…" : "Save"}</Button.Root>
           </Modal.Footer>
         </form>
       </Modal.Content>

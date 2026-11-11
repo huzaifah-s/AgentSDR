@@ -1,6 +1,6 @@
 import { and, eq, or, sql } from "drizzle-orm";
 import { people } from "./schema";
-import { normalizeEmail, normalizeLinkedinSlug } from "./identity";
+import { normalizeEmail, normalizeLinkedinSlug, parseCompanyDomain } from "./identity";
 import { inOrg } from "@/lib/tenancy/scope";
 import { upsertPerson, withLeadTransaction } from "./records";
 import { normalizePhone } from "@/lib/calls/phone";
@@ -29,6 +29,10 @@ export function normalizeManualPersonInput(input: ManualPersonInput, phoneCountr
   if (input.email && !email) throw new Error(`Invalid email address: ${input.email}`);
   if (input.linkedinUrl && !linkedinUrl) throw new Error(`Invalid LinkedIn profile URL: ${input.linkedinUrl}`);
   if (!email && !linkedinUrl) throw new Error("An Email or LinkedIn URL is required");
+  // The domain is the company's identity (and what links the person to it).
+  if (clean(input.companyDomain) && !parseCompanyDomain(input.companyDomain)) {
+    throw new Error(`Invalid company domain: ${input.companyDomain} (expected something like acme.com)`);
+  }
   return {
     email,
     linkedinUrl,

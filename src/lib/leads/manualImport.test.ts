@@ -33,6 +33,12 @@ describe("manual People import", () => {
     assert.throws(() => normalizeManualPersonInput({ email: "not-an-email" }), /Invalid email/);
   });
 
+  test("accepts a company domain given as a URL and rejects one that is not a domain", () => {
+    assert.equal(normalizeManualPersonInput({ email: "jane@example.com", companyDomain: "https://www.Acme.com/about" }).companyDomain, "https://www.Acme.com/about");
+    assert.throws(() => normalizeManualPersonInput({ email: "jane@example.com", companyDomain: "Acme Inc" }), /Invalid company domain/);
+    assert.doesNotThrow(() => normalizeManualPersonInput({ email: "jane@example.com", companyDomain: "  " }));
+  });
+
   test("rejects one malformed supplied identity even when the other is valid", () => {
     assert.throws(() => normalizeManualPersonInput({
       email: "jane@example.com",

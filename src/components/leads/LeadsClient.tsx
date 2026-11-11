@@ -17,6 +17,7 @@ import { PageTabs } from "@/components/page/PageTabs";
 import { cn } from "@/utils/cn";
 import { CompaniesTable } from "./CompaniesTable";
 import { LeadsFilterPopover, type Subcategory } from "./LeadsFilterPopover";
+import { AddCompanyModal, type SavedCompany } from "./AddCompanyModal";
 import { AddPersonModal } from "./AddPersonModal";
 import { PeopleImportModal } from "./PeopleImportModal";
 import { PeopleTable } from "./PeopleTable";
@@ -71,7 +72,8 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
   const [error, setError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
   const [showImport, setShowImport] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
+  const [addPerson, setAddPerson] = useState<{ company?: SavedCompany } | null>(null);
+  const [showAddCompany, setShowAddCompany] = useState(false);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
   const skipUrl = useRef<string | null>(requestUrl(initialTab, initialTab === "people" ? freshPeople() : freshCompanies()));
 
@@ -166,11 +168,13 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
         <PageHeader
           title="Leads"
           description="Every person and company you can reach, with their outreach and CRM state."
-          actions={isPeople && (
+          actions={isPeople ? (
             <>
-              <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => setShowAdd(true)}><Button.Icon as={RiUserAddLine} />Add person</Button.Root>
+              <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => setAddPerson({})}><Button.Icon as={RiUserAddLine} />Add person</Button.Root>
               <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowImport(true)}><Button.Icon as={RiUpload2Line} />Import people</Button.Root>
             </>
+          ) : (
+            <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowAddCompany(true)}><Button.Icon as={RiBuilding2Line} />Add company</Button.Root>
           )}
         />
 
@@ -225,15 +229,17 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
               <EmptyState
                 icon={isPeople ? RiUserSearchLine : RiBuilding2Line}
                 title={filtersOn || searching ? `No ${noun} match ${filtersOn ? "these filters" : "this search"}` : `No ${noun} yet`}
-                description={filtersOn || searching ? "Try broadening your search or changing a filter." : isPeople ? "Add people one at a time or import a spreadsheet." : "Companies appear as people are added."}
+                description={filtersOn || searching ? "Try broadening your search or changing a filter." : isPeople ? "Add people one at a time or import a spreadsheet." : "Add a company by its domain, or it appears when a person at it is added."}
                 action={
                   filtersOn > 0 || searching
                     ? <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => patch({ query: "", ...(isPeople ? { filters: EMPTY_FILTERS } : {}) })}>Clear {filtersOn ? "filters" : "search"}</Button.Root>
-                    : isPeople && (
+                    : isPeople ? (
                       <div className="flex flex-wrap justify-center gap-2">
-                        <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => setShowAdd(true)}><Button.Icon as={RiUserAddLine} />Add person</Button.Root>
+                        <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => setAddPerson({})}><Button.Icon as={RiUserAddLine} />Add person</Button.Root>
                         <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowImport(true)}><Button.Icon as={RiUpload2Line} />Import people</Button.Root>
                       </div>
+                    ) : (
+                      <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowAddCompany(true)}><Button.Icon as={RiBuilding2Line} />Add company</Button.Root>
                     )
                 }
               />
@@ -257,7 +263,24 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
             </nav>
           )}
         </Frame>
-        {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onSaved={() => { setPeopleState(freshPeople()); refetch(); }} />}
+        {addPerson && (
+          <AddPersonModal
+            company={addPerson.company}
+            onClose={() => setAddPerson(null)}
+            // A person can create or link a company, so both lists refresh.
+            onSaved={() => { if (isPeople) setPeopleState(freshPeople()); else setPeopleData(null); refetch(); }}
+          />
+        )}
+        {showAddCompany && (
+          <AddCompanyModal
+            onClose={() => setShowAddCompany(false)}
+            onSaved={(company, next) => {
+              setShowAddCompany(false);
+              if (isPeople) setCompaniesData(null); else { setCompaniesState(freshCompanies()); refetch(); }
+              if (next === "add-person") setAddPerson({ company });
+            }}
+          />
+        )}
         {showImport && <PeopleImportModal onClose={() => setShowImport(false)} onImported={() => { setPeopleState(freshPeople()); refetch(); }} />}
       </PageContainer>
     </main>

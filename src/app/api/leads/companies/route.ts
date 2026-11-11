@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listCompanies, upsertCompany, withLeadTransaction } from "@/lib/leads/records";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { and, eq } from "drizzle-orm";
+import { companies } from "@/lib/leads/schema";
+import { parseCompanyDomain } from "@/lib/leads/identity";
+import { inOrg } from "@/lib/tenancy/scope";
 
 export async function GET(req: NextRequest) {
   try {
@@ -37,18 +41,23 @@ export async function POST(req: NextRequest) {
 
 async function create(req: NextRequest) {
   const body = await req.json().catch(() => null);
-  if (!body || typeof body.domain !== "string") return NextResponse.json({ error: "domain is required" }, { status: 400 });
+  if (!body || typeof body.domain !== "string" || !body.domain.trim()) return NextResponse.json({ error: "domain is required" }, { status: 400 });
+  // The domain is the company's identity: refuse a name typed into it.
+  const domain = parseCompanyDomain(body.domain);
+  if (!domain) return NextResponse.json({ error: `Invalid company domain: ${body.domain} (expected something like acme.com)` }, { status: 400 });
   try {
-    const company = await withLeadTransaction((tx) =>
-      upsertCompany(tx, {
-        domain: body.domain,
+    const result = await withLeadTransaction(async (tx) => {
+      const [existing] = await tx.select({ id: companies.id }).from(companies).where(and(inOrg(companies), eq(companies.domain, domain))).limit(1);
+      const company = await upsertCompany(tx, {
+        domain,
         name: typeof body.name === "string" ? body.name : null,
         linkedinUrl: typeof body.linkedinUrl === "string" ? body.linkedinUrl : null,
         source: "manual",
-      }),
-    );
-    if (!company) return NextResponse.json({ error: "domain is required" }, { status: 400 });
-    return NextResponse.json({ company }, { status: 201 });
+      });
+      return { company, created: !existing };
+    });
+    if (!result.company) return NextResponse.json({ error: "domain is required" }, { status: 400 });
+    return NextResponse.json(result, { status: result.created ? 201 : 200 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not save company" }, { status: 400 });
   }

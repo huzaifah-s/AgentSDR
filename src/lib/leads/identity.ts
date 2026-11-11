@@ -117,6 +117,19 @@ export function normalizeCompanyDomain(value: string | null | undefined): string
   return normalizeDomainForTargeting(value) || null;
 }
 
+const HOSTNAME_PATTERN = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}[a-z0-9]$/;
+
+/**
+ * A domain typed by a person — a company's identity, so "Acme Inc" must not
+ * become the company `acme inc`. normalizeCompanyDomain() accepts anything,
+ * because imports and LinkedIn already hand it real hosts; the manual paths
+ * check with this first. Returns the normalized domain, or null.
+ */
+export function parseCompanyDomain(value: string | null | undefined): string | null {
+  const domain = normalizeCompanyDomain(value);
+  return domain && HOSTNAME_PATTERN.test(domain) ? domain : null;
+}
+
 export function inferCompanyDomainFromEmail(value: string | null | undefined): string | null {
   const email = normalizeEmail(value);
   const domain = email?.split("@")[1] ?? null;

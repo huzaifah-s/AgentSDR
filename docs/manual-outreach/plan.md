@@ -1,7 +1,14 @@
 # Manual outreach: reach one person, and log what happened
 
-Status: proposed (11 Nov 2026). Builds on the hand-entered People and
-Companies on the Leads page (commits 8e26b3c, 7d9c1c5, 57eb5f0).
+Status: Phases 1–3 built (11 Nov 2026: 8766c83, 346eadf, 7baf29d, b9c2ec9);
+Phase 4 not started. Builds on the hand-entered People and Companies on the
+Leads page (commits 8e26b3c, 7d9c1c5, 57eb5f0).
+
+Decided: **(a)**, a person enters the CRM at the first manual touch. One-off
+emails are outbound messages on the record's email conversation (keyed by
+the Gmail thread), and `replyBridge.ts` treats a sender who already has a
+CRM conversation on that thread as a known recipient: before, a reply from
+anyone outside an email campaign reached only the Master Inbox.
 
 ## Goal
 

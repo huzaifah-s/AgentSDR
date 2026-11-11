@@ -103,6 +103,7 @@ const OWNED_TABLES = [
   "outreach_campaigns",
   "outreach_emails",
   "outreach_leads",
+  "outreach_mailbox_credentials",
   "outreach_mailbox_queue",
   "outreach_mailboxes",
   "outreach_suppression_list",

@@ -1,4 +1,4 @@
-/** Stores Gmail mail in Master Inbox and routes known contacts into CRM. */
+/** Stores inbound mail (Gmail or IMAP) in Master Inbox and routes known contacts into CRM. */
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { inboxContacts, inboxMessages } from "@/lib/inbox/schema";
@@ -10,7 +10,7 @@ import type { InboundMessage } from "./gmail";
 import { upsertPerson, withLeadTransaction } from "@/lib/leads/records";
 import { people } from "@/lib/leads/schema";
 import { crmConversations } from "@/lib/crm/schema";
-import { gmailInboundEventKey } from "./inboundIdentity";
+import { inboundEventKey } from "./inboundIdentity";
 import { ingestInboundReply as ingestCrmInboundReply } from "@/lib/crm/conversations";
 import { quarantineCrmIdentity } from "@/lib/crm/identity";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
@@ -301,7 +301,7 @@ async function attachToThreadConversation(
     bodyText,
     raw: msg as unknown as Record<string, unknown>,
     sentAt: msg.internalDate ?? new Date(),
-    actorRef: "gmail",
+    actorRef: msg.source ?? "gmail",
   });
   log.info(`${msg.fromEmail} replied on ${leadEmail}'s thread — attached to that conversation`);
   log.info(result.duplicate ? "CRM already stored this Gmail reply" : "Gmail reply routed to CRM");
@@ -349,7 +349,7 @@ export async function ingestGmailReply(
   }
 
   const bodyText = msg.bodyText && looksLikeHtml(msg.bodyText) ? htmlToPlainText(msg.bodyText) : msg.bodyText;
-  const durableMessageKey = gmailInboundEventKey(mailboxAddress, msg.gmailMessageId);
+  const durableMessageKey = inboundEventKey(mailboxAddress, msg);
   const isKnownOutreachRecipient = options.isKnownOutreachRecipient ?? (async (email: string) => {
     const [recipient] = await db
       .select({ id: outreachLeads.id })
@@ -445,7 +445,7 @@ export async function ingestGmailReply(
     bodyText,
     raw: msg as unknown as Record<string, unknown>,
     sentAt: repliedAt,
-    actorRef: "gmail",
+    actorRef: msg.source ?? "gmail",
   });
   log.info(result.duplicate ? "CRM already stored this Gmail reply" : "Gmail reply routed to CRM");
   return { leadId: result.record.id, skipped: result.duplicate };

@@ -4,7 +4,8 @@ import { inboxContacts, inboxMessages } from "@/lib/inbox/schema";
 import { people } from "@/lib/leads/schema";
 import { connections as linkedinConnections, messages as linkedinMessages } from "@/lib/linkedin/schema";
 import { isPlatformConnected, isPlatformNotConnectedError } from "@/lib/platform/credentials";
-import { sendEmail } from "@/lib/outreach/gmail";
+import { MailboxNotSendableError, mailboxProvider, sendEmail } from "@/lib/outreach/send";
+import { MailServerAddressError } from "@/lib/outreach/imapSmtp";
 import { sendMessage as sendLinkedInMessage } from "@/services/unipile.service";
 import {
   deliverWhatsappFromCrm,
@@ -143,6 +144,8 @@ export class DefiniteCrmSendError extends Error {
 function providerErrorIsDefinite(error: unknown): boolean {
   // Nothing was submitted: the platform was never connected.
   if (error instanceof DefiniteCrmSendError || isPlatformNotConnectedError(error)) return true;
+  // Nothing was submitted: no stored SMTP login, or the server address was refused before connecting.
+  if (error instanceof MailboxNotSendableError || error instanceof MailServerAddressError) return true;
   if (!error || typeof error !== "object") return false;
   const value = error as { code?: unknown; status?: unknown; response?: { status?: unknown } };
   const status = Number(value.status ?? value.response?.status ?? value.code);
@@ -151,7 +154,11 @@ function providerErrorIsDefinite(error: unknown): boolean {
 
 export const sendThroughCrmProvider: CrmSendAdapter = async (input) => {
   if (input.channel === "email") {
-    if (!(await isPlatformConnected("google"))) throw new DefiniteCrmSendError("Google Workspace is not connected — connect it in Settings → Email → Connection");
+    // An SMTP + IMAP mailbox sends with its own login; anything else is a Google Workspace address.
+    const mailbox = await mailboxProvider(input.accountRef);
+    if (mailbox?.provider !== "imap" && !(await isPlatformConnected("google"))) {
+      throw new DefiniteCrmSendError("Google Workspace is not connected — connect it in Settings → Email → Connection");
+    }
     if (!input.recipientEmail) throw new DefiniteCrmSendError("The Person has no Email address");
     if (!input.subject) throw new DefiniteCrmSendError("Email subject is required");
     const result = await sendEmail({

@@ -30,7 +30,7 @@ export async function syncMailboxInbox(mailboxId: string, options: SyncMailboxOp
     return { synced: 0 };
   }
   const [mailbox] = await db.select().from(mailboxes).where(and(inOrg(mailboxes), eq(mailboxes.id, mailboxId))).limit(1);
-  if (!mailbox || mailbox.status !== "connected") return { synced: 0 };
+  if (!mailbox || mailbox.status !== "connected" || mailbox.provider === "imap") return { synced: 0 };
   if (!mailbox.lastHistoryId) return { synced: 0 }; // nothing to diff against yet
 
   let syncResult;

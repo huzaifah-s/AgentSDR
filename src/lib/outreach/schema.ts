@@ -13,6 +13,22 @@ import { organizations } from "@/lib/auth/schema";
 
 export type MailboxStatus = "connecting" | "connected" | "failed" | "disabled";
 
+/**
+ * How a mailbox sends and reads mail. `google`: our Google Workspace service
+ * account impersonates it (Gmail API). `imap`: its own login — SMTP sends,
+ * IMAP reads replies (src/lib/outreach/imapSmtp.ts).
+ */
+export type MailboxProvider = "google" | "imap";
+
+/** Where IMAP reply sync left off in INBOX. A new UIDVALIDITY restarts it. */
+export type ImapCursor = {
+  uidValidity: string;
+  lastUid: number;
+  /** The next message (UID) failed to store; retried each poll up to a limit (imapSync.ts). */
+  retryUid?: number;
+  retries?: number;
+};
+
 export type WorkingDay = { enabled: boolean; from: string; to: string }; // from/to as "HH:mm" 24h
 
 export type WorkingHours = {
@@ -55,10 +71,13 @@ export const mailboxes = pgTable("outreach_mailboxes", {
   emailAddress: text("email_address").notNull().unique(),
   displayName: text("display_name"),
   status: text("status").notNull().default("connecting").$type<MailboxStatus>(),
+  provider: text("provider").notNull().default("google").$type<MailboxProvider>(),
   lastError: text("last_error"),
   lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
   /** Gmail History API cursor — set once the first successful sync/watch runs. */
   lastHistoryId: text("last_history_id"),
+  /** IMAP mailboxes only: the INBOX position reply sync has read up to. */
+  imapCursor: jsonb("imap_cursor").$type<ImapCursor>(),
   dailySendLimit: integer("daily_send_limit").notNull().default(30),
   todayEmailsSent: integer("today_emails_sent").notNull().default(0),
   sendCounterResetAt: timestamp("send_counter_reset_at", { withTimezone: true }),
@@ -71,6 +90,37 @@ export const mailboxes = pgTable("outreach_mailboxes", {
 },
   (t) => [index("outreach_mailboxes_organization_idx").on(t.organizationId)],
 );
+
+/** The server settings of an IMAP mailbox — no secrets; safe to show in the UI. */
+export type ImapSmtpSettings = {
+  smtpHost: string;
+  smtpPort: number;
+  /** "tls": TLS from the first byte (465). "starttls": plain, then upgraded (587); refused if the server cannot. */
+  smtpSecurity: "tls" | "starttls";
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: "tls" | "starttls";
+  username: string;
+  /** IMAP folder a copy of each send is saved to; null when the server files sends itself. */
+  sentFolder: string | null;
+};
+
+/**
+ * The login of an `imap` mailbox, one row per mailbox. The password is
+ * encrypted with INTEGRATION_CREDENTIALS_KEY (src/lib/integrations/
+ * credential-crypto.ts) and never leaves the server; it is kept apart from
+ * outreach_mailboxes so a mailbox row can be returned to the UI as it is.
+ */
+export const mailboxCredentials = pgTable("outreach_mailbox_credentials", {
+  mailboxId: uuid("mailbox_id")
+    .primaryKey()
+    .references(() => mailboxes.id, { onDelete: "cascade" }),
+  settings: jsonb("settings").notNull().$type<ImapSmtpSettings>(),
+  /** Encrypted JSON `{ password }`. */
+  encryptedSecret: text("encrypted_secret").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
 
 export type SuppressionReason = "unsubscribed" | "bounced" | "manual" | "complaint";
 

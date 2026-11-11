@@ -105,7 +105,7 @@ describe("daily", () => {
 
 describe("registry", () => {
   test("in-process jobs and their schedules", () => {
-    expect(PLATFORM_JOBS.filter((j) => j.enabled).map((j) => j.name)).toEqual(["linkedin-run-outreach", "linkedin-replay-webhooks", "crm-auto-follow-ups", "history-prune"]);
+    expect(PLATFORM_JOBS.filter((j) => j.enabled).map((j) => j.name)).toEqual(["linkedin-run-outreach", "linkedin-replay-webhooks", "crm-auto-follow-ups", "email-imap-sync", "history-prune"]);
     expect(platformJob("linkedin-run-outreach").schedule).toEqual({ kind: "interval", minutes: 30 });
     expect(platformJob("linkedin-replay-webhooks").schedule).toEqual({ kind: "interval", minutes: 10 });
     expect(platformJob("linkedin-run-search-queue").enabled).toBe(false);

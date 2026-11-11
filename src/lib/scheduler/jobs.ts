@@ -9,6 +9,7 @@ import { runSearchQueue } from "@/jobs/runSearchQueue";
 import { startTrackedJob } from "@/lib/linkedin/jobTracker";
 import { jobRuns } from "@/lib/linkedin/schema";
 import { runCrmAutoFollowUps } from "@/lib/crm/autoFollowUps";
+import { pollImapMailboxes } from "@/lib/outreach/imapSync";
 import { pruneClaims } from "./claims";
 import type { PlatformJobName } from "./schedules";
 
@@ -55,6 +56,10 @@ export async function startPlatformJob(name: PlatformJobName): Promise<StartedJo
     }
     case "crm-auto-follow-ups": {
       const summary = await runCrmAutoFollowUps();
+      return { body: { ok: true, summary }, done: finished };
+    }
+    case "email-imap-sync": {
+      const summary = await pollImapMailboxes();
       return { body: { ok: true, summary }, done: finished };
     }
     case "history-prune": {

@@ -20,6 +20,7 @@ export type PlatformJobName =
   | "linkedin-run-search-queue"
   | "linkedin-replay-webhooks"
   | "crm-auto-follow-ups"
+  | "email-imap-sync"
   | "history-prune";
 
 export type PlatformJob = {
@@ -67,6 +68,14 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     schedule: everyMinutes(5),
     enabled: true,
     description: "Automatic CRM follow-ups, one per sending account at a time (sequences with automatic follow-ups on)",
+  },
+  {
+    // SMTP + IMAP mailboxes have no push (Gmail's arrive through its Pub/Sub
+    // watch), so their INBOX is polled for replies.
+    name: "email-imap-sync",
+    schedule: everyMinutes(2),
+    enabled: true,
+    description: "Read new replies from SMTP + IMAP mailboxes",
   },
   {
     name: "history-prune",

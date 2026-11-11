@@ -16,7 +16,7 @@ import { companies, people } from "@/lib/leads/schema";
 import { personVariables } from "@/lib/leads/variables";
 import { mailboxes, outreachLeads, outreachEmails, outreachCampaigns, outreachMailboxQueue } from "./schema";
 import type { SequenceStep } from "./schema";
-import { sendEmail } from "./gmail";
+import { sendEmail } from "./send";
 import { isPlatformConnected } from "@/lib/platform/credentials";
 import { isSuppressed } from "./suppression";
 import { isWithinWorkingHours } from "./workingHours";
@@ -94,12 +94,10 @@ export async function runSchedulerTick(options: { send?: SendFunction; now?: Dat
 }
 
 async function tickOrganization(result: TickResult, now: Date, send: SendFunction, injectedSender: boolean) {
-  // An injected sender (tests) bypasses Gmail entirely, so only the real one needs credentials.
-  // Google is connected per organization: one without it is skipped, not the whole tick.
-  if (!injectedSender && !(await isPlatformConnected("google"))) {
-    console.log(`[outreach/scheduler] Google Workspace is not connected for organization ${currentOrganizationId()}; skipped`);
-    return;
-  }
+  // An injected sender (tests) bypasses the providers entirely, so only the real one needs credentials.
+  // Google is connected per organization: without it that organization's Google
+  // mailboxes wait, while its SMTP + IMAP mailboxes (their own login) still send.
+  const googleConnected = injectedSender || (await isPlatformConnected("google"));
 
   const queuedMailboxIds = await db
     .selectDistinct({ mailboxId: outreachMailboxQueue.mailboxId })
@@ -116,6 +114,10 @@ async function tickOrganization(result: TickResult, now: Date, send: SendFunctio
   for (const { mailboxId } of queuedMailboxIds) {
     const [mailbox] = await db.select().from(mailboxes).where(and(inOrg(mailboxes), eq(mailboxes.id, mailboxId))).limit(1);
     if (!mailbox || mailbox.status !== "connected") continue;
+    if (mailbox.provider !== "imap" && !googleConnected) {
+      console.log(`[outreach/scheduler] Google Workspace is not connected for organization ${currentOrganizationId()}; ${mailbox.emailAddress} skipped`);
+      continue;
+    }
 
     if (mailbox.nextEmailTime && mailbox.nextEmailTime > now) {
       result.skippedThrottle += 1;
@@ -269,7 +271,7 @@ async function sendNextStep(
     return;
   }
 
-  // Re-check Person-global DNC after claiming and immediately before Gmail.
+  // Re-check Person-global DNC after claiming and immediately before the provider.
   // This closes the race where DNC is set while a queued send is being built.
   if (await isPersonDoNotContact(db, lead.personId)) {
     await db.update(outreachEmails).set({

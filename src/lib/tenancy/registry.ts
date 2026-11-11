@@ -86,6 +86,7 @@ export const INHERITED: Readonly<Record<string, string>> = {
   outreach_leads: "outreach_campaigns",
   outreach_emails: "outreach_leads",
   outreach_mailbox_queue: "outreach_mailboxes",
+  outreach_mailbox_credentials: "outreach_mailboxes",
   crm_settings: "crm_pipelines",
   crm_subcategories: "crm_pipelines",
   crm_person_contact_policies: "people",

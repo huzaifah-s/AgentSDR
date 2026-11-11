@@ -1,13 +1,18 @@
 ---
 title: "Connect email"
-description: "Connect Google Workspace, add the mailboxes campaigns send from, and set each mailbox's signature and sending hours."
+description: "Add the mailboxes campaigns send from (Google Workspace, or any provider over SMTP and IMAP), and set each mailbox's signature and sending hours."
 icon: "mail"
 ---
 
-Email in AgentSDR sends and reads Gmail through a Google Workspace service account. You connect that account once for your organization, then add the individual mailboxes (for example `rep@yourcompany.com`) that campaigns send from. All of it lives under **Settings → Email**, which has three tabs: **Mailboxes**, **Connection** and **Sending rules**.
+A mailbox (for example `rep@yourcompany.com`) is an address campaigns send from and replies arrive at. There are two ways to add one, and an organization can mix them:
+
+- **Google Workspace**: a Google Workspace service account sends and reads Gmail for every address on your domain. You connect it once for the organization, then add addresses with no password. See [Connect Google Workspace](#connect-google-workspace).
+- **Any other provider (SMTP + IMAP)**: Zoho, Fastmail, Yahoo, iCloud, GoDaddy, cPanel or other hosting, or your company's own mail server. Each mailbox signs in with its own username and (usually app) password: SMTP sends, IMAP reads the replies. Nothing to connect first. See [Add a mailbox](#add-a-mailbox).
+
+All of it lives under **Settings → Email**, which has three tabs: **Mailboxes**, **Connection** and **Sending rules**.
 
 <Info>
-Only Google Workspace mailboxes are supported today. Microsoft Outlook is listed on the **Connection** tab as "coming soon".
+Microsoft 365 / Outlook is not supported yet: Microsoft is retiring password sign-in for SMTP and IMAP, so it needs its own connection. It is listed on the **Connection** tab as "coming soon".
 </Info>
 
 ## Connect Google Workspace
@@ -38,18 +43,21 @@ Open **Settings → Email → Connection**. The **Google Workspace** card shows 
 Without the **Gmail Pub/Sub topic**, sending works but replies are not picked up. Leave it empty only if you do not need reply detection, because reply detection is what stops a sequence when someone answers.
 </Warning>
 
-Once connected, the card shows **Edit**, **Disconnect** and when the credentials were last verified. Disconnect pauses everything that depends on Google: email pages show a **Connect Google Workspace** prompt, background sending stops, and nothing is read from env variables as a fallback. Owners and admins manage this; see [Organizations](/workspace/organizations).
+Once connected, the card shows **Edit**, **Disconnect** and when the credentials were last verified. Disconnect pauses everything that depends on Google: Google mailboxes stop sending and syncing (SMTP + IMAP mailboxes carry on), email pages show a **Connect email** prompt when the organization has no other mailbox, and nothing is read from env variables as a fallback. Owners and admins manage this; see [Organizations](/workspace/organizations).
 
 ## Add a mailbox
 
-The credentials above let AgentSDR act for your domain. A mailbox is one address on that domain.
+Go to **Settings → Email → Mailboxes** and click **Add mailbox**. The dialog, **Add a mailbox**, starts with a choice: **Google Workspace** (available once Google is connected) or **Other provider (SMTP + IMAP)**.
+
+### A Google Workspace address
+
+The Google credentials above let AgentSDR act for your domain. A mailbox is one address on that domain.
 
 <Steps>
-  <Step title="Open Mailboxes">
-    Go to **Settings → Email → Mailboxes** and click **Add mailbox**. Until Google is connected this page shows the Connect prompt instead.
+  <Step title="Choose Google Workspace">
+    Pick **Google Workspace** at the top of the dialog.
   </Step>
   <Step title="Enter the address">
-    The dialog is titled **Add a mailbox**.
 
     - **Email address** (required): a Google Workspace address covered by your domain-wide delegation.
     - **Display name** (optional): the name recipients see beside the address.
@@ -59,6 +67,40 @@ The credentials above let AgentSDR act for your domain. A mailbox is one address
     Click **Connect & test**. AgentSDR calls Gmail as that address. If it works you see **Mailbox connected**. If not, **The connection test failed** shows Google's reason and you can click **Try again**.
   </Step>
 </Steps>
+
+### Add a mailbox from another provider (SMTP + IMAP)
+
+<Steps>
+  <Step title="Choose Other provider (SMTP + IMAP)">
+    It is the only choice while Google Workspace is not connected.
+  </Step>
+  <Step title="Pick the provider">
+    **Provider** fills in the servers for Zoho Mail, Fastmail, Gmail (app password), Yahoo Mail, iCloud Mail and GoDaddy Professional Email. For anything else, pick **Other** and type them in; your provider's help pages list them as "SMTP server" and "IMAP server".
+  </Step>
+  <Step title="Enter the address and login">
+    - **Email address** (required): the address campaigns send from.
+    - **Username** (required): follows the address, which is right for nearly every provider.
+    - **Password** (required): most providers need an **app password** here, not the account's own, especially with two-factor sign-in on. The hint under the field says where to make one for the chosen provider. It is stored encrypted and used only to send from and read this mailbox.
+    - **SMTP server**, **IMAP server**, their **Port** and **Security**: port 465 (SMTP) and 993 (IMAP) mean **SSL/TLS**; 587 means **STARTTLS**. Connections are always encrypted: a server that cannot upgrade with STARTTLS is refused rather than sent the password in the clear.
+    - **Save a copy of each email to the Sent folder** (on by default): plain SMTP does not keep sent mail, so AgentSDR files a copy in the mailbox's Sent folder over IMAP, and your sends show up in the mailbox's own mail app. Turn it off for a provider that files SMTP sends itself (Gmail does), or each would appear twice.
+    - **Display name** and **Signature** (optional), as for Google.
+  </Step>
+  <Step title="Connect and test">
+    Click **Connect & test**. AgentSDR signs in to both servers without sending anything. If either refuses, **The connection test failed** says which one (sending or replies) and why, and nothing is saved.
+  </Step>
+</Steps>
+
+Replies to an SMTP + IMAP mailbox are read from its **INBOX every two minutes** (Google mailboxes get theirs within seconds). Reading starts from the moment the mailbox is added, so older mail is not mistaken for replies, and nothing is marked as read. Replies and bounces then go where Google's do: the Inbox, the CRM, and stopping the lead's sequence.
+
+To change the servers or password later, choose **Change login** on the mailbox's **...** menu. Leave the password empty to keep the saved one. The change is tested first and a failed test leaves the mailbox as it was, so a typo cannot stop its campaigns.
+
+<Note>
+Some providers cap how many emails a mailbox may send a day over SMTP (shared hosting often allows only a few hundred). Keep the mailbox's daily limit under your provider's.
+</Note>
+
+<Note>
+For self-hosted AgentSDR: a mail server is refused if its name resolves to a private or internal address (`10.x`, `192.168.x`, `localhost` and similar). If your mail server is on your own network, set `EMAIL_ALLOW_PRIVATE_HOSTS=true`.
+</Note>
 
 An address can belong to only one organization. If it is already connected elsewhere, the dialog says so.
 
@@ -70,12 +112,14 @@ Each row shows a status, how many emails went out today against the mailbox's da
 | --- | --- |
 | **Connected** | Can send. |
 | **Failed** | The last connection test failed. The error appears under the address; click **Test again**. |
+
+Under each address the table shows how the mailbox connects: **Google Workspace**, or **SMTP + IMAP** with its SMTP server. A problem reading replies (for example a changed password) appears under the address too, while the mailbox keeps its status until a test fails.
 | **Connecting** | The first test has not finished. |
 | **Disabled** | Not sending. |
 
 Only **Connected** mailboxes send. The cards above the table summarise **Connected**, **Needs attention**, **Sent today** and **Left today** (daily limits of connected mailboxes minus what they sent). Failed mailboxes are sorted to the top.
 
-Use the **...** menu on a row for **Test connection**, **Send test email** (connected mailboxes only), **Sending hours**, **Signature** and **Remove mailbox**. Removing a mailbox stops it sending, and emails scheduled from it do not go out.
+Use the **...** menu on a row for **Test connection**, **Send test email** (connected mailboxes only), **Change login** (SMTP + IMAP mailboxes), **Sending hours**, **Signature** and **Remove mailbox**. Removing a mailbox stops it sending, and emails scheduled from it do not go out.
 
 ## Daily limit
 

@@ -1,5 +1,7 @@
 /**
- * Re-encrypts integration credentials with INTEGRATION_CREDENTIALS_KEY.
+ * Re-encrypts integration credentials with INTEGRATION_CREDENTIALS_KEY:
+ * grid_provider_credentials and the SMTP + IMAP mailbox passwords in
+ * outreach_mailbox_credentials (same key, same format).
  *
  * Dry-run (default):
  *   LEGACY_INTEGRATION_CREDENTIALS_KEYS=... bun run scripts/rotate-integration-credentials.ts
@@ -167,6 +169,58 @@ async function main() {
         status: APPLY ? "rotated" : "rotatable",
         sourceKeyFingerprint,
       });
+    }
+
+    // SMTP + IMAP mailbox logins (scripts/add-mailbox-smtp-imap.ts). The table
+    // may not exist yet on a database that predates it.
+    const { rows: mailboxTable } = await client.query<{ exists: boolean }>(
+      `SELECT to_regclass('outreach_mailbox_credentials') IS NOT NULL AS exists`,
+    );
+    const mailboxRows = mailboxTable[0]?.exists
+      ? (await client.query<{ mailbox_id: string; email_address: string; encrypted_secret: string }>(`
+          SELECT c.mailbox_id, m.email_address, c.encrypted_secret
+          FROM outreach_mailbox_credentials c
+          JOIN outreach_mailboxes m ON m.id = c.mailbox_id
+          ORDER BY m.created_at
+          FOR UPDATE OF c
+        `)).rows
+      : [];
+    summary.total += mailboxRows.length;
+    for (const row of mailboxRows) {
+      if (tryDecrypt(row.encrypted_secret, targetSecret)) {
+        summary.alreadyCurrent += 1;
+        results.push({ integration: "mailbox-smtp-imap", account: row.email_address, status: "already_current" });
+        continue;
+      }
+      let credentials: CredentialObject | null = null;
+      let sourceKeyFingerprint: string | null = null;
+      for (const secret of legacySecrets) {
+        credentials = tryDecrypt(row.encrypted_secret, secret);
+        if (credentials) {
+          sourceKeyFingerprint = fingerprint(secret);
+          break;
+        }
+      }
+      if (!credentials) {
+        summary.unresolved += 1;
+        results.push({ integration: "mailbox-smtp-imap", account: row.email_address, status: "unresolved" });
+        continue;
+      }
+      summary.rotatable += 1;
+      const plaintext = JSON.stringify(credentials);
+      const rotatedPayload = encrypt(plaintext, targetSecret);
+      const verification = tryDecrypt(rotatedPayload, targetSecret);
+      if (!verification || JSON.stringify(verification) !== plaintext) {
+        throw new Error(`Round-trip verification failed for mailbox ${row.mailbox_id}`);
+      }
+      if (APPLY) {
+        await client.query(
+          `UPDATE outreach_mailbox_credentials SET encrypted_secret = $1, updated_at = now() WHERE mailbox_id = $2`,
+          [rotatedPayload, row.mailbox_id],
+        );
+        summary.rotated += 1;
+      }
+      results.push({ integration: "mailbox-smtp-imap", account: row.email_address, status: APPLY ? "rotated" : "rotatable", sourceKeyFingerprint });
     }
 
     if (APPLY) await client.query("COMMIT");

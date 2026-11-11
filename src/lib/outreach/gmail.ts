@@ -83,10 +83,19 @@ export type SendEmailParams = {
  * API has no separate envelope field. Gmail handles hiding Bcc recipients from
  * the delivered copies.
  */
-export async function buildRawEmailMessage(params: SendEmailParams): Promise<Buffer> {
+export async function buildRawEmailMessage(
+  params: SendEmailParams,
+  options: {
+    /** False for SMTP, where Bcc recipients travel in the envelope and must not appear in the delivered copy. */
+    keepBcc?: boolean;
+    /** Sets the Message-ID instead of letting the composer invent one (SMTP needs to know it). */
+    messageId?: string;
+  } = {},
+): Promise<Buffer> {
   const { from, to, subject, text, html, inReplyTo, references, cc, bcc, unsubscribeUrl, fromName } = params;
 
   const mail = new MailComposer({
+    ...(options.messageId ? { messageId: options.messageId } : {}),
     // RFC 5322 display name. Quoted and with embedded quotes/backslashes
     // escaped, so a name containing a comma or quote can't break the header.
     from: fromName ? `"${fromName.replace(/["\\]/g, "\\$&")}" <${from}>` : from,
@@ -113,7 +122,7 @@ export async function buildRawEmailMessage(params: SendEmailParams): Promise<Buf
   // MailComposer defaults to SMTP's behaviour of stripping Bcc from the
   // serialized message. Gmail's raw-message API instead uses that header to
   // identify Bcc recipients, so it must be retained until Gmail accepts it.
-  message.keepBcc = true;
+  message.keepBcc = options.keepBcc ?? true;
 
   return new Promise<Buffer>((resolve, reject) =>
     message.build((err, raw) => (err ? reject(err) : resolve(raw))),
@@ -121,7 +130,8 @@ export async function buildRawEmailMessage(params: SendEmailParams): Promise<Buf
 }
 
 /**
- * Sends one email as `from`, returning Gmail's id/threadId and the RFC822
+ * Sends one email as `from` through the Gmail API (a `google` mailbox;
+ * callers go through send.ts, which picks the provider), returning Gmail's id/threadId and the RFC822
  * Message-Id (for threading later sends).
  *
  * `threadId` (if passed) is Gmail's own thread grouping — pass the prior
@@ -133,7 +143,7 @@ export async function buildRawEmailMessage(params: SendEmailParams): Promise<Buf
  * reply exchange. Gmail's users.messages.send requestBody.threadId is the
  * documented, reliable way to force same-thread grouping for API sends.
  */
-export async function sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
+export async function sendGmailEmail(params: SendEmailParams): Promise<SendEmailResult> {
   const { from, threadId } = params;
 
   const auth = await jwtFor(from, ["https://www.googleapis.com/auth/gmail.send"]);
@@ -192,6 +202,13 @@ export async function registerWatch(emailAddress: string, topicName: string): Pr
 }
 
 export type InboundMessage = {
+  /** Where it was read. Absent on rows stored before IMAP existed: Gmail. */
+  source?: "gmail" | "imap";
+  /**
+   * The provider's id for this delivery: Gmail's message id, or for IMAP the
+   * Message-ID header (else `uid:<uidvalidity>:<uid>`). The field keeps its
+   * Gmail name because stored payloads and their readers use it.
+   */
   gmailMessageId: string;
   threadId: string | null;
   fromEmail: string | null;

@@ -7,6 +7,7 @@ import {
   RiClockwiseLine,
   RiDeleteBinLine,
   RiErrorWarningLine,
+  RiKey2Line,
   RiMailSendLine,
   RiMoreLine,
   RiPenNibLine,
@@ -21,10 +22,11 @@ import * as Table from "@/components/alignui/table";
 import { CHANNEL_META } from "@/components/analytics/theme";
 import { AccountIdentity, PresenceDot } from "@/components/settings/AccountsOverview";
 import { Meter } from "@/components/settings/SettingsKit";
-import type { mailboxes } from "@/lib/outreach/schema";
+import type { ImapSmtpSettings, mailboxes } from "@/lib/outreach/schema";
 import { cn } from "@/utils/cn";
 import WorkingHoursModal from "./WorkingHoursModal";
 import SignatureModal from "./SignatureModal";
+import ConnectMailboxDialog from "./ConnectMailboxDialog";
 import { useDialogs } from "@/components/DialogProvider";
 
 type Mailbox = typeof mailboxes.$inferSelect;
@@ -78,13 +80,23 @@ function hoursSummary(mailbox: Mailbox) {
   return `${dayLabel}, ${first.from}–${first.to}`;
 }
 
-function MailboxTableRow({ mailbox }: { mailbox: Mailbox }) {
+function MailboxTableRow({
+  mailbox,
+  googleConnected,
+  imapSettings,
+}: {
+  mailbox: Mailbox;
+  googleConnected: boolean;
+  imapSettings: ImapSmtpSettings | undefined;
+}) {
   const dialogs = useDialogs();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [testSendResult, setTestSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [showHours, setShowHours] = useState(false);
   const [showSignature, setShowSignature] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const isImap = mailbox.provider === "imap";
 
   async function handleRetest() {
     setBusy(true);
@@ -167,7 +179,7 @@ function MailboxTableRow({ mailbox }: { mailbox: Mailbox }) {
               {mailbox.emailAddress}
             </span>
           }
-          detail={mailbox.displayName || "No display name"}
+          detail={`${mailbox.displayName || "No display name"} · ${isImap ? `SMTP + IMAP${imapSettings ? ` (${imapSettings.smtpHost})` : ""}` : "Google Workspace"}`}
           extra={
             note && (
               <p
@@ -244,6 +256,12 @@ function MailboxTableRow({ mailbox }: { mailbox: Mailbox }) {
                   Send test email
                 </Dropdown.Item>
               )}
+              {isImap && imapSettings && (
+                <Dropdown.Item onSelect={() => setShowLogin(true)}>
+                  <Dropdown.ItemIcon as={RiKey2Line} />
+                  Change login
+                </Dropdown.Item>
+              )}
               <Dropdown.Item onSelect={() => setShowHours(true)}>
                 <Dropdown.ItemIcon as={RiTimeLine} />
                 Sending hours
@@ -272,6 +290,13 @@ function MailboxTableRow({ mailbox }: { mailbox: Mailbox }) {
             onSaved={() => router.refresh()}
           />
         )}
+        {showLogin && imapSettings && (
+          <ConnectMailboxDialog
+            googleConnected={googleConnected}
+            edit={{ emailAddress: mailbox.emailAddress, displayName: mailbox.displayName, settings: imapSettings }}
+            onClose={() => setShowLogin(false)}
+          />
+        )}
         {showSignature && (
           <SignatureModal
             mailboxId={mailbox.id}
@@ -286,7 +311,15 @@ function MailboxTableRow({ mailbox }: { mailbox: Mailbox }) {
   );
 }
 
-export default function MailboxTable({ mailboxes }: { mailboxes: Mailbox[] }) {
+export default function MailboxTable({
+  mailboxes,
+  googleConnected,
+  imapSettings,
+}: {
+  mailboxes: Mailbox[];
+  googleConnected: boolean;
+  imapSettings: Record<string, ImapSmtpSettings>;
+}) {
   return (
     <Table.Root className="min-w-190 [&>table]:table-fixed">
       <Table.Header>
@@ -300,7 +333,7 @@ export default function MailboxTable({ mailboxes }: { mailboxes: Mailbox[] }) {
       </Table.Header>
       <Table.Body spacing={4}>
         {mailboxes.map((m) => (
-          <MailboxTableRow key={m.id} mailbox={m} />
+          <MailboxTableRow key={m.id} mailbox={m} googleConnected={googleConnected} imapSettings={imapSettings[m.id]} />
         ))}
       </Table.Body>
     </Table.Root>

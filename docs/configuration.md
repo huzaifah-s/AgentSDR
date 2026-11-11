@@ -515,6 +515,16 @@ on every redirect. A self-hosted install that needs internal APIs can set
 
 Read in `src/lib/grid/runners/http.ts`.
 
+### `EMAIL_ALLOW_PRIVATE_HOSTS`
+
+SMTP + IMAP mailboxes connect to servers the person adding the mailbox names,
+so a server whose name resolves to a loopback, private, link-local (including
+cloud metadata) or CGNAT address is refused, and the connection goes to the
+address that was checked. A self-hosted install whose mail server is on its
+own network can set `EMAIL_ALLOW_PRIVATE_HOSTS=true`.
+
+Read in `src/lib/outreach/imapSmtp.ts`.
+
 ## Public demo
 
 ### `DEMO_MODE`

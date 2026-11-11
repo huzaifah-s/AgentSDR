@@ -16,7 +16,7 @@ export default function Page() {
         },
       ]}
       title="Email connection"
-      description="The Google Workspace service account that sends and reads Gmail for every mailbox in Email → Accounts. Microsoft Outlook is coming soon."
+      description="The Google Workspace service account that sends and reads Gmail for Workspace mailboxes. Mailboxes on any other provider need no connection here: add them on Email → Mailboxes with their SMTP and IMAP login. Microsoft Outlook is coming soon."
     />
   );
 }

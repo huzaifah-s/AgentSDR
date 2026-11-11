@@ -297,12 +297,14 @@ type AccountSlot = { ok: false } | { ok: true; afterSend?: () => Promise<void> }
 /** Whether the account may send one follow-up now; for a mailbox it also takes the mailbox's turn. */
 async function takeAccountSlot(channel: CrmChannel, accountRef: string, now: Date): Promise<AccountSlot> {
   if (isMigrationControlPaused(CHANNEL_PAUSE[channel])) return { ok: false };
-  if (!(await isPlatformConnected(PLATFORM[channel]))) return { ok: false };
+  // Email checks its provider below: an SMTP + IMAP mailbox needs no Google Workspace.
+  if (channel !== "email" && !(await isPlatformConnected(PLATFORM[channel]))) return { ok: false };
   if (!(await gapPassed(channel, accountRef, now))) return { ok: false };
 
   if (channel === "email") {
     const [mailbox] = await db.select().from(mailboxes)
       .where(and(inOrg(mailboxes), eq(mailboxes.emailAddress, accountRef))).limit(1);
+    if (mailbox?.provider !== "imap" && !(await isPlatformConnected("google"))) return { ok: false };
     if (!mailbox) {
       // A thread on an address that is not a sending mailbox here: only the
       // organization's default hours and the follow-up gap apply.

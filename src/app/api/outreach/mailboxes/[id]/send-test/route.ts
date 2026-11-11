@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMailbox } from "@/lib/outreach/mailboxes";
-import { sendEmail } from "@/lib/outreach/gmail";
+import { sendEmail } from "@/lib/outreach/send";
 import { withOrgContext, authContextErrorResponse } from "@/lib/auth/context";
 
 // POST /api/outreach/mailboxes/[id]/send-test — { to } — sends a one-off

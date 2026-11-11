@@ -11,13 +11,22 @@ import { EmptyState } from "@/components/page/EmptyState";
 import { ACCOUNTS_PAGE_SIZE, AccountsFrame, AccountsNoMatch, AccountsPager, type AccountFilter } from "@/components/settings/AccountsOverview";
 import AddMailboxButton from "./AddMailboxButton";
 import MailboxTable from "./MailboxTable";
-import type { mailboxes } from "@/lib/outreach/schema";
+import type { ImapSmtpSettings, mailboxes } from "@/lib/outreach/schema";
 
 type Mailbox = typeof mailboxes.$inferSelect;
 
 const healthy = (m: Mailbox) => m.status === "connected";
 
-export default function MailboxesPageClient({ mailboxes }: { mailboxes: Mailbox[] }) {
+export default function MailboxesPageClient({
+  mailboxes,
+  googleConnected,
+  imapSettings,
+}: {
+  mailboxes: Mailbox[];
+  googleConnected: boolean;
+  /** Server settings (no passwords) of the SMTP + IMAP mailboxes, by mailbox id. */
+  imapSettings: Record<string, ImapSmtpSettings>;
+}) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<AccountFilter>("all");
   const [page, setPage] = useState(0);
@@ -55,10 +64,14 @@ export default function MailboxesPageClient({ mailboxes }: { mailboxes: Mailbox[
           <EmptyState
             icon={RiMailLine}
             title="No mailboxes yet"
-            description="Add a Google Workspace address authorised for sending, and campaigns can start sending from it."
+            description={
+              googleConnected
+                ? "Add a Google Workspace address authorised for sending, or any other mailbox over SMTP and IMAP, and campaigns can start sending from it."
+                : "Add a mailbox from any provider with SMTP and IMAP (or connect Google Workspace first for Workspace addresses), and campaigns can start sending from it."
+            }
             action={
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <AddMailboxButton />
+                <AddMailboxButton googleConnected={googleConnected} />
                 <DocsLink page="email/connect#add-a-mailbox" />
               </div>
             }
@@ -106,7 +119,7 @@ export default function MailboxesPageClient({ mailboxes }: { mailboxes: Mailbox[
         searchPlaceholder="Search mailboxes…"
         footer={<AccountsPager page={current} total={filtered.length} noun="mailboxes" onPage={setPage} />}
       >
-        {filtered.length === 0 ? <AccountsNoMatch noun="mailboxes" /> : <MailboxTable mailboxes={visible} />}
+        {filtered.length === 0 ? <AccountsNoMatch noun="mailboxes" /> : <MailboxTable mailboxes={visible} googleConnected={googleConnected} imapSettings={imapSettings} />}
       </AccountsFrame>
     </div>
   );

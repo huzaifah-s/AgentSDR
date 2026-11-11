@@ -153,6 +153,43 @@ cron secrets and tuning knobs. Two deliberate exceptions:
 the store once (verifying each; Langfuse's old `LANGFUSE_*` keys too); keep
 it as the record of that move.
 
+## Mailboxes: Google Workspace or SMTP + IMAP
+
+A mailbox (`outreach_mailboxes`) has a `provider`: `google` (the Google
+Workspace integration impersonates it; Gmail API, Pub/Sub push for replies)
+or `imap` (any other provider, with the mailbox's own login — no
+integration). Every send goes through `sendEmail` in
+`src/lib/outreach/send.ts`, which picks the provider by the `from` mailbox;
+never call `sendGmailEmail` or `sendSmtpEmail` directly. "Google not
+connected" gates only Google mailboxes: an organization with only IMAP
+mailboxes still sends, syncs and sees the Email section (`hasEmailSender`).
+
+IMAP specifics (`src/lib/outreach/imapSmtp.ts`, `imapSync.ts`):
+
+- The login lives in `outreach_mailbox_credentials` (settings in the clear,
+  password encrypted with `INTEGRATION_CREDENTIALS_KEY`), kept off the
+  mailbox row so the row can go to the UI as it is. Schema:
+  `scripts/add-mailbox-smtp-imap.ts`.
+- Threads have no provider id, so a thread is named by its **root
+  Message-ID** (`emailThreading.ts`): a send that starts one is its own root,
+  a reply carries it first in References. That root is what
+  `outreach_emails.thread_id` and `crm_conversations.provider_thread_id` hold
+  for these mailboxes. SMTP sends set their own Message-ID; Bcc goes in the
+  envelope only; a copy is APPENDed to Sent when the mailbox has a Sent
+  folder (off for providers that file SMTP sends themselves).
+- Replies: the platform job `email-imap-sync` (every 2 min) reads INBOX
+  read-only from `imap_cursor` (UIDVALIDITY + last UID), one message at a
+  time through the same reply bridge as Gmail (`InboundMessage.source =
+  'imap'`, durable key `imap:<mailbox>:<Message-ID>`). A failing message is
+  retried 5 polls, then skipped (its event stays in `crm_webhook_events`); a
+  renumbered INBOX restarts from now.
+- Hosts are user-supplied, so one resolving to a private/internal address is
+  refused and the connection goes to the checked IP (no rebinding) —
+  `EMAIL_ALLOW_PRIVATE_HOSTS=true` for self-hosters with LAN mail servers.
+- Connecting or changing a login tests both servers first; a failed change
+  never touches a working mailbox. Microsoft 365 is not offered: it is
+  retiring password auth for SMTP/IMAP and needs its own OAuth connection.
+
 ## The public API: API keys, not sessions
 
 `/api/v1/*` is for other applications, not the UI (`docs/api.mdx`). It is

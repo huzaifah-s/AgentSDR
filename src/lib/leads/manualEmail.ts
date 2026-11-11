@@ -6,7 +6,7 @@ import { appendCrmEvent } from "@/lib/crm/events";
 import { isEmailDoNotContact, isPersonDoNotContact } from "@/lib/crm/policies";
 import { withCrmTransaction } from "@/lib/crm/repository";
 import { recordManualOutboundInTransaction } from "@/lib/crm/manualOutbound";
-import { sendEmail } from "@/lib/outreach/gmail";
+import { sendEmail } from "@/lib/outreach/send";
 import { toHtmlBody } from "@/lib/outreach/render";
 import { mailboxes } from "@/lib/outreach/schema";
 import { isSuppressed } from "@/lib/outreach/suppression";
@@ -120,12 +120,13 @@ export async function sendManualEmail(input: ManualEmailInput): Promise<ManualEm
     throw new ManualEmailError(409, `${to} is on the suppression list (unsubscribed, bounced or removed by hand)`);
   }
 
-  // Throws PlatformNotConnectedError, which the route answers with 409.
-  await requirePlatformCredentials("google");
-
   const [mailbox] = await db.select().from(mailboxes)
     .where(and(inOrg(mailboxes), eq(mailboxes.id, input.mailboxId))).limit(1);
   if (!mailbox) throw new ManualEmailError(404, "Mailbox not found");
+
+  // A Google mailbox needs Google Workspace (PlatformNotConnectedError, which
+  // the route answers with 409); an SMTP + IMAP one sends with its own login.
+  if (mailbox.provider !== "imap") await requirePlatformCredentials("google");
 
   const now = new Date();
   const verdict = mailboxSendVerdict(mailbox, now);

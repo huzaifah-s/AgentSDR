@@ -6,7 +6,7 @@ import { RiAddLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import ConnectMailboxDialog from "./ConnectMailboxDialog";
 
-export default function AddMailboxButton() {
+export default function AddMailboxButton({ googleConnected }: { googleConnected: boolean }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -15,7 +15,7 @@ export default function AddMailboxButton() {
         <Button.Icon as={RiAddLine} />
         Add mailbox
       </Button.Root>
-      {open && <ConnectMailboxDialog onClose={() => setOpen(false)} />}
+      {open && <ConnectMailboxDialog googleConnected={googleConnected} onClose={() => setOpen(false)} />}
     </>
   );
 }

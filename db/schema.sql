@@ -2314,6 +2314,33 @@ CREATE TABLE public.invitations (
 );
 
 --
+-- Name: linkedin_posts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.linkedin_posts (
+    organization_id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    linkedin_account_id text NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    body text DEFAULT ''::text NOT NULL,
+    attachments jsonb DEFAULT '[]'::jsonb NOT NULL,
+    source jsonb,
+    generation jsonb,
+    scheduled_at timestamp with time zone,
+    published_at timestamp with time zone,
+    provider_post_id text,
+    post_url text,
+    error text,
+    created_by text,
+    published_by text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT linkedin_posts_attachments_chk CHECK ((jsonb_typeof(attachments) = 'array'::text)),
+    CONSTRAINT linkedin_posts_body_length_chk CHECK ((char_length(body) <= 3000)),
+    CONSTRAINT linkedin_posts_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'scheduled'::text, 'publishing'::text, 'published'::text, 'failed'::text])))
+);
+
+--
 -- Name: members; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3459,6 +3486,13 @@ ALTER TABLE ONLY public.import_runs
 
 ALTER TABLE ONLY public.invitations
     ADD CONSTRAINT invitations_pkey PRIMARY KEY (id);
+
+--
+-- Name: linkedin_posts linkedin_posts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_posts
+    ADD CONSTRAINT linkedin_posts_pkey PRIMARY KEY (id);
 
 --
 -- Name: members members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -4631,6 +4665,30 @@ CREATE INDEX invitations_organization_id_idx ON public.invitations USING btree (
 --
 
 CREATE INDEX lead_person_idx ON public."Lead" USING btree ("personId");
+
+--
+-- Name: linkedin_posts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX linkedin_posts_account_idx ON public.linkedin_posts USING btree (linkedin_account_id);
+
+--
+-- Name: linkedin_posts_org_account_published_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX linkedin_posts_org_account_published_idx ON public.linkedin_posts USING btree (organization_id, linkedin_account_id, published_at);
+
+--
+-- Name: linkedin_posts_org_status_scheduled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX linkedin_posts_org_status_scheduled_idx ON public.linkedin_posts USING btree (organization_id, status, scheduled_at);
+
+--
+-- Name: linkedin_posts_provider_post_id_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX linkedin_posts_provider_post_id_uq ON public.linkedin_posts USING btree (provider_post_id) WHERE (provider_post_id IS NOT NULL);
 
 --
 -- Name: members_organization_id_idx; Type: INDEX; Schema: public; Owner: -
@@ -5929,6 +5987,20 @@ ALTER TABLE ONLY public.invitations
 
 ALTER TABLE ONLY public.invitations
     ADD CONSTRAINT invitations_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+
+--
+-- Name: linkedin_posts linkedin_posts_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_posts
+    ADD CONSTRAINT linkedin_posts_account_fk FOREIGN KEY (linkedin_account_id) REFERENCES public."LinkedInAccount"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+--
+-- Name: linkedin_posts linkedin_posts_organization_id_organizations_id_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_posts
+    ADD CONSTRAINT linkedin_posts_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
 
 --
 -- Name: members members_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -

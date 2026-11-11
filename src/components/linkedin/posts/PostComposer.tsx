@@ -409,7 +409,7 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
               {account ? <LinkedInAccountTag account={account} size="md" /> : <span className="text-paragraph-xs text-text-soft-400">Choose an account</span>}
               <p className={cn("mt-3 whitespace-pre-wrap break-words text-paragraph-sm", body.trim() ? "text-text-strong-950" : "text-text-soft-400")}>
                 {body.trim() ? preview.shown : "Your post's first lines show here."}
-                {preview.truncated && <span className="text-text-sub-600">… see more</span>}
+                {preview.truncated && <span className="text-text-sub-600"> …see more</span>}
               </p>
               {images.length > 0 && (
                 <div className={cn("mt-3 grid gap-1", images.length > 1 && "grid-cols-2")}>

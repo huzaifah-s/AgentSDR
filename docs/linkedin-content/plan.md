@@ -1,6 +1,8 @@
 # LinkedIn posts: write, schedule and publish from AgentSDR
 
-Status: planned (11 Nov 2026), nothing built.
+Status: Phase 1 built (11 Nov 2026), not yet live: the migration has not
+run on the production database, and no real post has been published (see
+"Phase 1 as built"). Phases 2–5 planned.
 
 Decided (11 Nov 2026): posts go out on the person's own profile only
 (decision 1a); any member may post from any of the organization's
@@ -141,6 +143,61 @@ Verify on a real account: one post with text, one with an image. Record
 whether `post_id` comes back and what the post URL looks like (expected
 `https://www.linkedin.com/feed/update/<urn>/`). Settle the URL format from
 that, not from guesses.
+
+### Phase 1 as built (11 Nov 2026)
+
+What differs from the plan above, and why:
+
+- **The account foreign key is declared in Drizzle** (a named
+  `foreignKey(...)` to `linkedInAccounts.id`, as the tables pointing at
+  `people` do), not left out. The check the plan asked for showed
+  `drizzle-kit push` would otherwise drop `linkedin_posts_account_fk`; it
+  manages this table's constraints even though it ignores
+  `"LinkedInAccount"` itself. The organization key is named as Drizzle names
+  it for the same reason. With both, drizzle-kit proposes nothing for
+  `linkedin_posts`.
+- **A failed post is edited back into a draft.** Publish claims only
+  `draft` / `scheduled`; saving a failed post (PATCH) makes it a draft and
+  clears the error, which is the "check LinkedIn, then try again" step. The
+  composer does that save itself when Publish is pressed on a failed post,
+  and its confirmation warns when the last attempt may have gone out.
+- **Image routes take the image's uuid** (`/[id]/images/[imageId]`), not
+  `<uuid>.<ext>`: `src/proxy.ts` lets any path ending in an image extension
+  through untouched, demo read-only guard included. `GET` on the same path
+  redirects to a presigned R2 link for the composer. Image size is checked in
+  the browser (≤ 6012×6012 px) and bytes on the server (≤ 8 MB, type sniffed
+  from the file's own bytes).
+- **The stale `publishing` sweep** (`failStalePublishingPosts`, plus an
+  across-organizations `failStalePublishingPostsEverywhere` for Phase 3's
+  job) also runs whenever a post or the list is read, so a crashed publish
+  does not wait for Phase 3.
+- **The daily limit counts posts being published** as well as those
+  published since the day began, under a per-account advisory lock, so two
+  simultaneous publishes cannot both pass it.
+- **The post URL is provisional** (`postUrlFor` in `publishRules.ts`): bare
+  digits become `urn:li:activity:<id>`, a `urn:li:` id is used as is,
+  anything else gets no link. Settle it from the real check below.
+
+Verified locally (disposable database built from `db/schema.sql`, dev
+server, a mock Unipile over TLS): `scripts/e2e/linkedin-posts.ts`, 46
+checks — one Unipile call per publish and never a retry; 4xx fails with the
+reason, 5xx and a dropped connection fail as "may have been posted"; a null
+`post_id` publishes with no link; the third post of a day is refused before
+Unipile; a stale `publishing` post is failed; published posts are
+read-only; and a second organization, with Unipile connected and an
+account of its own, can list, open, edit, delete, publish, upload to or
+count none of the first one's posts, and cannot post on its accounts.
+`check-organization-scope.ts --contract` passes; the generic
+`tenancy-isolation.ts` now targets the posts routes and pages with real ids.
+
+Still waiting on a person:
+
+1. Run `bun run scripts/create-linkedin-post-tables.ts` on the production
+   database.
+2. The real-account check above (one text post, one with an image, on a
+   test account someone picks), then fix `postUrlFor` to what Unipile
+   returns. Images were exercised only up to R2 being disconnected: an
+   upload to a real bucket and its publish are part of that check.
 
 ## Phase 2: AI drafts
 

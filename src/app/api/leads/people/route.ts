@@ -63,6 +63,7 @@ async function createPerson(req: NextRequest) {
       companyName: typeof body.companyName === "string" ? body.companyName : null,
       companyDomain: typeof body.companyDomain === "string" ? body.companyDomain : null,
       notes: typeof body.notes === "string" ? body.notes : null,
+      phone: typeof body.phone === "string" ? body.phone : null,
     });
     return NextResponse.json(result, { status: result.created ? 201 : 200 });
   } catch (error) {

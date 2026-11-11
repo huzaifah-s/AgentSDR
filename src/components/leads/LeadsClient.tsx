@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { RiArrowDownLine, RiArrowLeftSLine, RiArrowRightSLine, RiArrowUpLine, RiDownloadLine, RiMore2Line, RiSearchLine, RiTable2, RiUpload2Line, RiUserSearchLine, RiBuilding2Line, RiUserLine } from "@remixicon/react";
+import { RiArrowDownLine, RiArrowLeftSLine, RiArrowRightSLine, RiArrowUpLine, RiDownloadLine, RiMore2Line, RiSearchLine, RiTable2, RiUpload2Line, RiUserSearchLine, RiBuilding2Line, RiUserLine, RiUserAddLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Input from "@/components/alignui/input";
@@ -17,6 +17,7 @@ import { PageTabs } from "@/components/page/PageTabs";
 import { cn } from "@/utils/cn";
 import { CompaniesTable } from "./CompaniesTable";
 import { LeadsFilterPopover, type Subcategory } from "./LeadsFilterPopover";
+import { AddPersonModal } from "./AddPersonModal";
 import { PeopleImportModal } from "./PeopleImportModal";
 import { PeopleTable } from "./PeopleTable";
 import { activeFilterCount, EMPTY_FILTERS, PAGE_SIZE, SORTS, type CompanyRow, type Direction, type LeadsTab, type PeopleFilters, type PersonRow } from "./leadTypes";
@@ -70,6 +71,7 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
   const [error, setError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
   const [showImport, setShowImport] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
   const skipUrl = useRef<string | null>(requestUrl(initialTab, initialTab === "people" ? freshPeople() : freshCompanies()));
 
@@ -164,7 +166,12 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
         <PageHeader
           title="Leads"
           description="Every person and company you can reach, with their outreach and CRM state."
-          actions={isPeople && <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowImport(true)}><Button.Icon as={RiUpload2Line} />Import people</Button.Root>}
+          actions={isPeople && (
+            <>
+              <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => setShowAdd(true)}><Button.Icon as={RiUserAddLine} />Add person</Button.Root>
+              <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowImport(true)}><Button.Icon as={RiUpload2Line} />Import people</Button.Root>
+            </>
+          )}
         />
 
         <PageTabs className="mt-6" label="Lead type" tabs={tabs} value={tab} onChange={switchTab} />
@@ -218,11 +225,16 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
               <EmptyState
                 icon={isPeople ? RiUserSearchLine : RiBuilding2Line}
                 title={filtersOn || searching ? `No ${noun} match ${filtersOn ? "these filters" : "this search"}` : `No ${noun} yet`}
-                description={filtersOn || searching ? "Try broadening your search or changing a filter." : isPeople ? "Import a spreadsheet to add people." : "Companies appear as people are imported."}
+                description={filtersOn || searching ? "Try broadening your search or changing a filter." : isPeople ? "Add people one at a time or import a spreadsheet." : "Companies appear as people are added."}
                 action={
                   filtersOn > 0 || searching
                     ? <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => patch({ query: "", ...(isPeople ? { filters: EMPTY_FILTERS } : {}) })}>Clear {filtersOn ? "filters" : "search"}</Button.Root>
-                    : isPeople && <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowImport(true)}><Button.Icon as={RiUpload2Line} />Import people</Button.Root>
+                    : isPeople && (
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => setShowAdd(true)}><Button.Icon as={RiUserAddLine} />Add person</Button.Root>
+                        <Button.Root variant="primary" mode="filled" size="small" onClick={() => setShowImport(true)}><Button.Icon as={RiUpload2Line} />Import people</Button.Root>
+                      </div>
+                    )
                 }
               />
             ) : table}
@@ -245,6 +257,7 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
             </nav>
           )}
         </Frame>
+        {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onSaved={() => { setPeopleState(freshPeople()); refetch(); }} />}
         {showImport && <PeopleImportModal onClose={() => setShowImport(false)} onImported={() => { setPeopleState(freshPeople()); refetch(); }} />}
       </PageContainer>
     </main>

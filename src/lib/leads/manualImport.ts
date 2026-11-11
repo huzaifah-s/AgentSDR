@@ -68,6 +68,8 @@ export async function upsertManualPerson(input: ManualPersonInput) {
       raw: normalized.notes ? { notes: normalized.notes } : undefined,
       source: "manual-people-import",
     });
-    return { personId: person.id, created: existing.length === 0 };
+    // `phone` is what was stored (null when none was given or it was dropped as
+    // malformed), so a form can say when a typed number did not take.
+    return { personId: person.id, created: existing.length === 0, phone: normalized.phone };
   });
 }

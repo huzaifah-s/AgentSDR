@@ -1,14 +1,16 @@
 # LinkedIn posts: write, schedule and publish from AgentSDR
 
-Status: Phase 1 built (11 Nov 2026), not yet live: the migration has not
-run on the production database, and no real post has been published. What
-was built and what changed from the plan: "Phase 1 as built", under Phase 1.
-Phase 2 (AI drafts) built (12 Nov 2026), not yet verified end to end: see
-"Phase 2 as built". Phase 3 (scheduling) built (12 Nov 2026, `5dcfcb8`),
-its e2e not run. Phase 4 (posts from what prospects say) built (12 Nov
-2026), its e2e not run: see "Phase 4 as built". Phase 5 (the content brief
-and each person's writing voice) built (12 Nov 2026), its e2e and
-migrations not run: see "Phase 5 as built".
+Status (12 Nov 2026): all five phases built and verified locally, ready
+to go live, not live. `scripts/e2e/linkedin-posts.ts` passes end to end,
+139/139 checks covering Phases 1–5, on a disposable database built from
+`db/schema.sql` with every migration applied (recipe: "Running the posts
+e2e"); its first full run found three bugs, fixed (see "Fixes from the
+first full e2e run" under Phase 5 as built). `check-organization-scope.ts
+--contract` passes and drizzle-kit proposes nothing for the posts tables.
+Nothing is merged, pushed or migrated in production, and no real post,
+model call, R2 upload or Langfuse sync has happened: the "Go-live
+checklist" below lists those steps in order, each with the user's yes.
+What was built per phase: "Phase N as built".
 
 Waiting on (Phase 1):
 
@@ -36,14 +38,11 @@ Waiting on (Phase 1):
 
 Waiting on (Phase 2):
 
-- [ ] **Run the e2e**: `scripts/e2e/linkedin-posts.ts` is extended for
-      Phase 2 (409 without OpenRouter, isolation of accounts and Knowledge,
-      the drafting path in-process with a fake completion, source and
-      generation recorded) but has **not been run**. Run it on a disposable
-      database (needs `scripts/add-mailbox-smtp-imap.ts` applied after
-      `db:setup`: `db/schema.sql` lacks it, so `db:seed:demo` fails
-      without it). It switches organization A's OpenRouter off before any
-      AI route call and restores it after.
+- [x] **Run the e2e** (12 Nov 2026): the Phase 2 checks (409 without
+      OpenRouter, isolation of accounts and Knowledge, the drafting path
+      in-process with a fake completion, source and generation recorded)
+      pass. `db/schema.sql` now includes the SMTP/IMAP schema, so
+      `db:setup` + `db:seed:demo` work without extra steps.
 - [ ] **A real generation**: with the user's yes, one generate and one
       rewrite through a real organization's OpenRouter key; check the three
       drafts keep to the rules and the trace lands in Langfuse.
@@ -58,8 +57,8 @@ Waiting on (Phase 2):
 
 Waiting on (Phases 3, 4 and 5):
 
-- [ ] **Run the e2e** covering Phases 2–5: `scripts/e2e/linkedin-posts.ts`
-      has the Phase 3, 4 and 5 checks. Phase 4: themes 409 without
+- [x] **Run the e2e** covering Phases 2–5 (12 Nov 2026, 139/139):
+      `scripts/e2e/linkedin-posts.ts` has the Phase 3, 4 and 5 checks. Phase 4: themes 409 without
       OpenRouter; a seeded prospect's call read, redacted, a theme and a
       draft naming them dropped or withheld; the sealed source saved
       without ids; a tampered source refused; scheduling and publishing an
@@ -68,8 +67,7 @@ Waiting on (Phases 3, 4 and 5):
       draft prompt in order; ideas read only public Knowledge and open as
       drafts; Learn from my posts saves nothing; B cannot read or change
       A's brief or voices, and its drafts and ideas carry none of them.
-      Never run. Same setup as Phase 2's, plus the two Phase 5 migrations
-      below on the disposable database.
+      All pass, after the fixes under "Phase 5 as built".
 - [ ] **Live migrations**, with the user's yes, on production's
       `DATABASE_URL`: `bun run scripts/add-crm-post-instructions.ts` (one
       column on `crm_settings`) and
@@ -79,6 +77,8 @@ Waiting on (Phases 3, 4 and 5):
       `linkedin_author_voices` are read). Both were applied to a disposable
       local database built from `db/schema.sql`, where re-running them
       changed nothing and `check-organization-scope.ts --contract` passed.
+      drizzle-kit proposes nothing for `linkedin_author_voices` or
+      `crm_settings.post_instructions` (checked 12 Nov 2026).
 - [ ] **Real AI calls**, with the user's yes, on a real organization's
       OpenRouter key: one themes call and one draft from a theme on its
       real replies and calls (check the summaries name nobody), one ideas
@@ -91,6 +91,89 @@ Waiting on (Phases 3, 4 and 5):
       changed ones), with the user's yes.
 - [ ] **One real scheduled publish** through the job's endpoint
       (`/api/linkedin/jobs/publish-posts`), on a test account.
+
+## Go-live checklist
+
+In this order. Each step that touches production, a real account or a
+real model needs the user's yes first; nothing here has been done.
+
+1. **Merge into `main`** (local). The branch
+   `claude/linkedin-posts-golive-415a9b` contains all five phases and
+   fast-forwards: `main`, `origin/main` and `upstream/main` were all at or
+   behind its base (`4555474`) on 12 Nov 2026, so there are no conflicts.
+   From the main checkout: `git merge --ff-only claude/linkedin-posts-golive-415a9b`,
+   then `npx tsc --noEmit` and `npm test`. If `main` has moved since,
+   `git merge-tree --write-tree main claude/linkedin-posts-golive-415a9b`
+   shows conflicts first.
+2. **Production migrations, before the code is deployed** (every page and
+   draft reads these). All additive and re-runnable (`IF NOT EXISTS`), each
+   prints what it made. Run from the main checkout with production's
+   `DATABASE_URL` (Bun loads the checkout's `.env.local`; check it points
+   where you think first):
+
+   ```bash
+   bun run scripts/add-mailbox-smtp-imap.ts
+   bun run scripts/create-linkedin-post-tables.ts
+   bun run scripts/add-crm-post-instructions.ts
+   bun run scripts/create-linkedin-author-voices.ts
+   ```
+
+   The first belongs to the SMTP/IMAP mailboxes already on `main`; it is a
+   no-op if production has it. Phase 3 has no migration of its own
+   (`scheduled_at` is in `linkedin_posts`). Then
+   `bun run scripts/check-organization-scope.ts --contract` against
+   production (read-only). Never `drizzle-kit push` there (see "Running
+   the posts e2e": it proposes unrelated drops).
+3. **Where to run steps 4–8: on the deployed app** (recommended): push
+   after step 2, check there, then push the `postUrlFor` fix. The
+   alternative, a local `next dev` with production's env before the push,
+   skips the senders (outreach, WhatsApp campaigns, AI calling and the
+   scheduled jobs start only when `NODE_ENV=production`) but still starts
+   the Tables enrichment worker (`startGridWorker` in
+   `src/instrumentation.ts`), which would claim production's queued cells
+   from that laptop. A local production build must never be started
+   against the live database. Either way, use a test LinkedIn account the
+   user picks.
+4. **A real publish** from the composer (Publish now): one text-only post,
+   one with an image. Record whether Unipile returns `post_id` and its
+   shape, and the post's real URL; then fix `postUrlFor` in
+   `src/lib/linkedin/posts/publishRules.ts` and its test to match, and
+   commit.
+5. **Images on real R2**, on an organization whose R2 integration is
+   real: upload, preview, publish with an image (step 4), and delete a
+   draft with images (its objects go too).
+6. **Real AI calls** on a real organization's OpenRouter key: one generate
+   (three drafts keep the rules), one rewrite, one "What prospects say"
+   (themes name nobody) and a draft from a theme, one Suggest ideas, one
+   Learn from my posts (voice-summary, and that `users.getOwnProfile` /
+   `users.getAllPosts` work on a real account), one draft with a brief and
+   a voice. Check the traces land in Langfuse.
+7. **Langfuse prompts**, per organization that has Langfuse connected:
+
+   ```bash
+   bun run --conditions=react-server scripts/seed-langfuse-prompts.ts --org <id> --check
+   bun run --conditions=react-server scripts/seed-langfuse-prompts.ts --org <id>
+   ```
+
+   The second creates the missing ones (`linkedin/post-*`,
+   `linkedin/post-themes*`, `linkedin/post-ideas*`,
+   `linkedin/voice-summary*`). `linkedin/post-system` and
+   `linkedin/post-user` changed in Phase 4–5: if `--check` lists them as
+   different, `--update` pushes the code's copy as a new production version
+   (only if nobody edited them in Langfuse on purpose).
+8. **One real scheduled publish** through the job's endpoint: schedule a
+   post on the test account at least 5 minutes ahead, then after its time
+   `curl -X POST -H "Authorization: Bearer $CRON_SECRET" <app>/api/linkedin/jobs/publish-posts`
+   (`?force=1` if the in-process job already took the slot). Once
+   deployed, the in-process `linkedin-publish-posts` job does the same
+   every 2 minutes; `PAUSE_LINKEDIN_POSTS=true` stops it.
+9. **The whole-app `tenancy-isolation.ts` sweep**, on a disposable local
+   copy only (never production), left to run to the end (hours on a dev
+   server; overnight): see the command in `CLAUDE.md`. Posts isolation is
+   already covered by `scripts/e2e/linkedin-posts.ts`.
+10. **Push** `main` (deploys): once after step 2 when checking on the
+    deployed app (step 3), and again with the `postUrlFor` fix; or once,
+    here, if steps 4–8 ran locally.
 
 Decided (11 Nov 2026): posts go out on the person's own profile only
 (decision 1a); any member may post from any of the organization's
@@ -579,12 +662,35 @@ and an SDR posting about the same pillar should not sound alike.
   description in the registry (`linkedin/post-ideas` + `-tool`,
   `linkedin/voice-summary` + `-tool`); their user messages are the context
   JSON alone, so no wording lives in code.
-- Not checked: whether `drizzle-kit push` is quiet about the new table and
-  column (Phase 1 checked this for `linkedin_posts`; the keys are named the
-  same way).
+- `drizzle-kit push` is quiet about the new table and column, and about
+  `linkedin_posts` (checked read-only on 12 Nov 2026; how in "Running the
+  posts e2e").
 - Tests: `brief.test.ts` (defaults, layers, voice parsing, the one line,
   the public switch, the voice summary, ideas), more in
   `aiSettings.test.ts` and `linkedin.test.ts`.
+
+### Fixes from the first full e2e run (12 Nov 2026)
+
+None of these could show in unit tests, which use fakes for the database
+reads:
+
+- **Themes never read calls.** The call-transcript query bound a `Date`
+  inside a raw `coalesce(...)` expression; postgres.js refuses a bare
+  `Date` parameter, so every themes read with a transcribed call in the
+  window failed (502). It now binds `toISOString()` typed as
+  `::timestamptz`, the convention elsewhere in the codebase.
+- **No voice could be saved or read.** `users.id` (uuid) was joined to
+  `linkedin_author_voices.updated_by` (text) with `eq()`, which TypeScript
+  accepts (both are strings) and Postgres refuses (`uuid = text`). Compared
+  as text, as `linkedin_posts` already did.
+- **The leak guard came after the daily limit.** A post naming a prospect
+  on an account at its limit was answered "already published 2 posts
+  today", and a scheduled one would wait a day and then fail. The guard now
+  runs before the refusals that only make a post wait (`onlyWaits` in
+  `publishRules.ts`: the daily limit, a disconnected account); refusals
+  about the post itself (already published, empty) still come first.
+- The e2e itself now archives its own "E2E …" Knowledge, so it can run
+  again on the same database.
 
 ## Decisions
 
@@ -652,6 +758,88 @@ Everything else is new files under
 `src/services/unipile.posts.ts`. Merge `upstream/main` before each phase,
 then `npx tsc --noEmit` and `npm test`.
 
+## Running the posts e2e
+
+What the run on 12 Nov 2026 needed, so the next one takes minutes. Every
+step has a budget; past it, stop and look (server log, `lsof -i :<port>`,
+`docker ps`, `pg_isready`) rather than wait.
+
+1. **A throwaway Postgres** (≈10 s), never one in use:
+
+   ```bash
+   docker run -d --name agentsdr-e2e-db -e POSTGRES_USER=e2e -e POSTGRES_PASSWORD=e2e \
+     -e POSTGRES_DB=agentsdr_e2e -p 127.0.0.1:5454:5432 postgres:16-alpine
+   ```
+
+   Gotcha: the first `pg_isready` inside the container can pass during
+   init, then the server restarts; poll `pg_isready -h 127.0.0.1 -p 5454`
+   from the host instead.
+2. **Throwaway secrets in a file outside the repo** (never copy
+   `.env.local`; Bun would load one in the working directory, and the
+   worktree has none). Source it in every command:
+
+   ```bash
+   export DATABASE_URL=postgres://e2e:e2e@127.0.0.1:5454/agentsdr_e2e DATABASE_SSL=disable
+   export BETTER_AUTH_SECRET=<openssl rand -hex 32> INTEGRATION_CREDENTIALS_KEY=<openssl rand -hex 32>
+   export UNSUBSCRIBE_SECRET=<openssl rand -hex 32> CRON_SECRET=<openssl rand -hex 16>
+   export AUTH_SIGNUP=open LANGFUSE_TRACING=off
+   export BETTER_AUTH_URL=http://localhost:3217 NEXT_PUBLIC_APP_URL=http://localhost:3217
+   export NODE_EXTRA_CA_CERTS=<path>/mock-cert.pem
+   ```
+3. **Schema, migrations, demo data** (≈1 min): `bun run db:setup`, then
+   `bun run scripts/create-linkedin-post-tables.ts`,
+   `bun run scripts/add-crm-post-instructions.ts`,
+   `bun run scripts/create-linkedin-author-voices.ts` (all no-ops on a
+   `db/schema.sql` from 12 Nov on, which has them and the SMTP/IMAP schema;
+   Phase 3 has no migration), then `bun run db:seed:demo` and
+   `bun run scripts/check-organization-scope.ts --contract`. Organization A
+   is the seeded Northwind: `demo@example.com` / `demo-password-123`, with
+   two connected LinkedIn accounts.
+4. **The mock's certificate**:
+   `openssl req -x509 -newkey rsa:2048 -nodes -keyout mock-key.pem -out mock-cert.pem -days 7 -subj /CN=localhost -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"`.
+5. **The dev server** in the background (Bash `run_in_background`, never
+   the browser pane's `preview_start`, which hung): `npx next dev -p 3217`
+   with the env above. Ready in seconds; poll the log for "Ready in" for at
+   most 3 min. The "inferred your workspace root" warning is harmless (a
+   worktree resolves `node_modules` from the main checkout).
+6. **The run** (≈3–5 min; background, capped at 25 min, log tailed):
+
+   ```bash
+   MOCK_TLS_CERT=mock-cert.pem MOCK_TLS_KEY=mock-key.pem \
+   INITIAL_OWNER_EMAIL=demo@example.com INITIAL_OWNER_PASSWORD=demo-password-123 \
+   BASE_URL=http://localhost:3217 bun run --conditions=react-server scripts/e2e/linkedin-posts.ts
+   ```
+
+   It waits 31 s for the server's integration cache before the first
+   check. It is re-runnable on the same database: it deletes A's posts at
+   the start and archives its own "E2E …" Knowledge at the start and the
+   end (Knowledge versions are append-only, so they cannot be deleted);
+   organization B is a fresh sign-up each run.
+7. **Afterwards**: stop the server; `docker rm -f agentsdr-e2e-db`.
+
+**drizzle-kit drift, read-only.** `drizzle-kit push` has no dry run, and
+`pushSchema` from `drizzle-kit/api` (0.31) drops query parameters (`there
+is no parameter $1`), so it cannot introspect. What works: the CLI
+(`npx drizzle-kit push --verbose --strict`) under `expect`, answering
+Enter to every "truncate?" prompt (keep the data) and then "No, abort",
+connected as the database owner with
+`?options=-c%20default_transaction_read_only%3Don` on `DATABASE_URL`, so
+DDL cannot run even if a prompt were answered wrong. A SELECT-only role
+gives a false answer: `information_schema.table_constraints` hides the
+constraints of tables it only has SELECT on, so every primary key, unique
+and CHECK looks missing. Result on 12 Nov 2026: nothing for
+`linkedin_posts`, `linkedin_author_voices` or `crm_settings`. It does
+propose 393 unrelated statements across the app (dropping the seven
+ex-Prisma enum types, two sequences, 19 columns on `crm_leads` and
+`targeted_domains`, legacy indexes, ~136 changes to `domains`): never run
+`drizzle-kit push` against production.
+
+**`db/schema.sql`** is regenerated with `bun run db:schema:dump` from the
+throwaway database after every migration is applied. The host's
+`pg_dump` must be at least the server's version; with an older one, point
+`PG_DUMP` at a wrapper that runs `docker exec agentsdr-e2e-db pg_dump …`
+with the URL's host rewritten to `localhost:5432`.
+
 ## Checks per phase
 
 - `npx tsc --noEmit`, `npm test` (new tests: `requests.ts`, the publish
@@ -660,6 +848,8 @@ then `npx tsc --noEmit` and `npm test`.
 - The tenancy isolation script on a local copy after the routes
   (`scripts/e2e/tenancy-isolation.ts`): a second organization must not list,
   open, edit, publish or count another's posts.
+- `scripts/e2e/linkedin-posts.ts` on a disposable database ("Running the
+  posts e2e").
 - A real publish from a test LinkedIn account (Phase 1) and a scheduled one
   (Phase 3), run once through the job's endpoint. Never by starting the app
   in production mode locally: that starts every other sender too, against

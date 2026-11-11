@@ -181,6 +181,16 @@ async function connectUnipile(organizationId: string) {
   await sql`insert into grid_provider_credentials (provider_id, encrypted_payload) values (${row.id}, ${payload})`;
 }
 
+/**
+ * Archives the Knowledge documents this script creates (titled "E2E …") in an
+ * organization, so a re-run starts from the same Knowledge. Archived, not
+ * deleted: document versions are append-only, and archived documents are
+ * left out of every Knowledge read the posts code does.
+ */
+async function removeE2eKnowledge(organizationId: string) {
+  await sql`update crm_knowledge_documents set active = false where organization_id = ${organizationId} and title like 'E2E %' and active`;
+}
+
 async function snapshot(id: string): Promise<string> {
   return JSON.stringify(await sql`select * from linkedin_posts where id = ${id}`);
 }
@@ -218,6 +228,7 @@ async function main() {
     const [acc, acc2] = accounts;
     // Start each run from an account with nothing published today.
     await sql`delete from linkedin_posts where organization_id = ${orgA.id}`;
+    await removeE2eKnowledge(orgA.id);
 
     console.log("waiting 31 s for the server's 30 s integration cache…");
     await Bun.sleep(31_000);
@@ -714,6 +725,7 @@ async function main() {
     const listA = await call(a, "GET", "/api/linkedin/posts?pageSize=100");
     check(!listA.text.includes((own.json.post as PostJson).id), "A's list does not show B's post");
   } finally {
+    await removeE2eKnowledge(orgA.id).catch((error) => console.error("could not remove the E2E Knowledge", error));
     if (savedBrief?.pipelineId) await sql`update crm_settings set post_instructions = ${savedBrief.postInstructions === null ? null : sql.json(savedBrief.postInstructions as never)} where pipeline_id = ${savedBrief.pipelineId}`;
     if (prospect) {
       await sql`delete from call_sessions where id = ${prospect.callId}`;

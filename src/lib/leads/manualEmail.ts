@@ -5,7 +5,6 @@ import { channelRules } from "@/lib/channels/rules.server";
 import { appendCrmEvent } from "@/lib/crm/events";
 import { isEmailDoNotContact, isPersonDoNotContact } from "@/lib/crm/policies";
 import { withCrmTransaction } from "@/lib/crm/repository";
-import { crmConversationMessages } from "@/lib/crm/schema";
 import { recordManualOutboundInTransaction } from "@/lib/crm/manualOutbound";
 import { sendEmail } from "@/lib/outreach/gmail";
 import { toHtmlBody } from "@/lib/outreach/render";
@@ -239,6 +238,7 @@ export async function recordSentManualEmail(input: {
       providerContactId: input.to,
       idempotencyKey: `leads-email:${input.sent.id ?? `${input.mailbox.emailAddress}:${input.to}:${input.sentAt.toISOString()}`}`,
       providerMessageId: input.sent.messageId ?? input.sent.id,
+      subject: input.subject,
       bodyText: input.body,
       raw: {
         messageId: input.sent.messageId,
@@ -253,8 +253,6 @@ export async function recordSentManualEmail(input: {
       ...actor,
       meta: { source: "leads" },
     });
-    // recordManualOutbound keeps no subject; an email has one.
-    await tx.update(crmConversationMessages).set({ subject: input.subject }).where(eq(crmConversationMessages.id, message.id));
     return appendCrmEvent(tx, {
       personId: input.personId,
       crmRecordId: record.id,

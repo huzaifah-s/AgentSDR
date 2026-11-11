@@ -211,6 +211,8 @@ export type RecordManualOutboundInput = {
   providerContactId?: string | null;
   idempotencyKey: string;
   providerMessageId?: string | null;
+  /** An email's subject; messages without one leave it out. */
+  subject?: string | null;
   bodyText: string;
   raw?: Record<string, unknown> | null;
   sentAt: Date;
@@ -249,7 +251,7 @@ export async function recordManualOutboundInTransaction(
     direction: "outbound",
     idempotencyKey: input.idempotencyKey,
     providerMessageId: input.providerMessageId,
-    subject: null,
+    subject: input.subject ?? null,
     bodyText: input.bodyText,
     raw: input.raw,
     sentAt: input.sentAt,

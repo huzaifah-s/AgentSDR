@@ -23,7 +23,7 @@ export function LogUpdateButton({ personId, onLogged }: { personId: string; onLo
           <Modal.Description>Something that happened outside AgentSDR: a call from your phone, a WhatsApp from your own number, a meeting.</Modal.Description>
         </Modal.Header>
         <Modal.Body>
-          {open && <LogUpdateForm personId={personId} onCancel={() => setOpen(false)} onLogged={(result) => { setOpen(false); onLogged(result); }} />}
+          {open && <LogUpdateForm personId={personId} framed={false} onCancel={() => setOpen(false)} onLogged={(result) => { setOpen(false); onLogged(result); }} />}
         </Modal.Body>
       </Modal.Content>
     </Modal.Root>

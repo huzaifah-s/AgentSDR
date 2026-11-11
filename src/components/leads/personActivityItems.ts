@@ -23,7 +23,6 @@ const EVENT_LABELS: Record<string, string> = {
   "message.failed": "Message failed",
   "contact_policy.dnc_set": "Do Not Contact enabled",
   "contact_policy.dnc_cleared": "Do Not Contact cleared",
-  "workflow.state_changed": "Workflow updated",
 };
 
 const humanize = (value: string) => value.replace(/[._]/g, " ").replace(/^\w/, (letter) => letter.toUpperCase());
@@ -57,8 +56,14 @@ function loggedItem(event: PersonActivityEvent): PersonActivityItem {
   };
 }
 
-/** The CRM's own audit copy of an email sent from Leads; its `manual_email.sent` event already shows it. */
-const isLeadsEmailEcho = (event: PersonActivityEvent) => event.eventType === "message.recorded" && event.meta?.source === "leads";
+/**
+ * Left out of the person's list, which is about what happened with them; the
+ * CRM record's Activity drawer keeps the full audit trail. The CRM's own copy
+ * of an email sent from Leads (its `manual_email.sent` event shows it), and
+ * workflow bookkeeping.
+ */
+const isAuditOnly = (event: PersonActivityEvent) =>
+  (event.eventType === "message.recorded" && event.meta?.source === "leads") || event.eventType === "workflow.state_changed";
 
 function eventItem(event: PersonActivityEvent): PersonActivityItem {
   if (event.eventType === "activity.logged") return loggedItem(event);
@@ -77,6 +82,6 @@ function eventItem(event: PersonActivityEvent): PersonActivityItem {
 
 /** Calls and CRM events in one list, newest first. Pure, for the tests. */
 export function personActivityItems(calls: CallSummary[], events: PersonActivityEvent[]): PersonActivityItem[] {
-  return [...calls.map(callItem), ...events.filter((event) => !isLeadsEmailEcho(event)).map(eventItem)]
+  return [...calls.map(callItem), ...events.filter((event) => !isAuditOnly(event)).map(eventItem)]
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 }

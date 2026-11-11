@@ -30,8 +30,10 @@ const fromLocalInput = (value: string) => (value ? new Date(value).toISOString()
  * (POST /api/leads/people/:id/activity). The first one gives the person a CRM
  * record; a follow-up date puts them in Action required on that day.
  */
-export function LogUpdateForm({ personId, onLogged, onCancel }: {
+export function LogUpdateForm({ personId, onLogged, onCancel, framed = true }: {
   personId: string;
+  /** Inside a dialog the dialog is the frame. */
+  framed?: boolean;
   onLogged: (result: LogUpdateResult) => void;
   onCancel: () => void;
 }) {
@@ -63,7 +65,7 @@ export function LogUpdateForm({ personId, onLogged, onCancel }: {
 
   const id = (field: string) => `log-${field}-${personId}`;
   return (
-    <form className="space-y-3 rounded-xl p-3 ring-1 ring-inset ring-stroke-soft-200" onSubmit={(event) => { event.preventDefault(); if (summary.trim() && !saving) void save(); }}>
+    <form className={framed ? "space-y-3 rounded-xl p-3 ring-1 ring-inset ring-stroke-soft-200" : "space-y-3"} onSubmit={(event) => { event.preventDefault(); if (summary.trim() && !saving) void save(); }}>
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <span className="mb-1.5 block text-label-xs text-text-sub-600">What</span>

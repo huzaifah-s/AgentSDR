@@ -39,11 +39,12 @@ describe("personActivityItems", () => {
     expect(item.at).toBe("2026-11-01T09:00:00.000Z");
   });
 
-  test("an email sent from Leads shows once: its CRM audit copy is left out", () => {
+  test("an email sent from Leads shows once, and workflow bookkeeping is left out", () => {
     const items = personActivityItems([], [
       event({ id: "sent", eventType: "manual_email.sent", meta: { subject: "Hello", from: "rep@example.test" } }),
       event({ id: "echo", eventType: "message.recorded", meta: { source: "leads" } }),
       event({ id: "phone", eventType: "message.recorded", meta: { origin: "phone" } }),
+      event({ id: "workflow", eventType: "workflow.state_changed", meta: { reason: "x" } }),
     ]);
     expect(items.map((item) => item.id)).toEqual(["event:sent", "event:phone"]);
     expect(items[0].detail).toBe("“Hello” from rep@example.test");

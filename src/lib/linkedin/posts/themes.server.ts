@@ -77,10 +77,13 @@ export async function readThemeSourceSet({ until, limit }: { until: Date; limit:
     .limit(limit);
 
   const callAt = sql<Date>`coalesce(${callSessions.endedAt}, ${callSessions.startedAt}, ${callSessions.createdAt})`;
+  // A raw expression has no column type to encode a Date with, and postgres.js
+  // refuses a bare Date parameter: bind the instant as text, typed in SQL.
+  const at = (value: Date) => sql`${value.toISOString()}::timestamptz`;
   const calls = await reader
     .select({ personId: callSessions.personId, transcript: callSessions.transcript, at: callAt.mapWith((value: string | Date) => new Date(value)) })
     .from(callSessions)
-    .where(and(inOrg(callSessions), eq(callSessions.transcriptStatus, "done"), isNotNull(callSessions.transcript), gte(callAt, since), lte(callAt, until)))
+    .where(and(inOrg(callSessions), eq(callSessions.transcriptStatus, "done"), isNotNull(callSessions.transcript), gte(callAt, at(since)), lte(callAt, at(until))))
     .orderBy(desc(callAt))
     .limit(limit);
 

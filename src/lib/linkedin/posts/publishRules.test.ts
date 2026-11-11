@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { feedPreview, firstLine, MAX_POST_LENGTH, UNCERTAIN_PUBLISH_ERROR } from "./contract";
-import { failureError, isStalePublishing, postUrlFor, publishRefusal, STALE_PUBLISHING_MS } from "./publishRules";
+import { failureError, isStalePublishing, onlyWaits, postUrlFor, publishRefusal, STALE_PUBLISHING_MS } from "./publishRules";
 
 const base = {
   status: "draft" as const,
@@ -36,6 +36,20 @@ describe("publishRefusal", () => {
     expect(refusal).toMatchObject({ status: 429 });
     expect(refusal?.message).toContain("2 posts");
     expect(publishRefusal({ ...base, publishedToday: 1, postsPerDay: 1 })?.message).toContain("1 post today");
+  });
+});
+
+describe("onlyWaits", () => {
+  const connected = { status: "CONNECTED" as const, name: "Alex" };
+  test("the daily limit and a disconnected account only wait, so the leak guard is told first", () => {
+    expect(onlyWaits(publishRefusal({ ...base, account: connected, publishedToday: 2, postsPerDay: 2 }))).toBe(true);
+    expect(onlyWaits(publishRefusal({ ...base, account: { status: "DISCONNECTED", name: "Alex" } }))).toBe(true);
+    expect(onlyWaits(publishRefusal({ ...base, account: null }))).toBe(true);
+  });
+  test("a refusal about the post itself comes before the guard", () => {
+    expect(onlyWaits(publishRefusal({ ...base, status: "published" }))).toBe(false);
+    expect(onlyWaits(publishRefusal({ ...base, body: " " }))).toBe(false);
+    expect(onlyWaits(null)).toBe(false);
   });
 });
 

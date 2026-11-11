@@ -62,6 +62,17 @@ export function publishRefusal(input: {
   return null;
 }
 
+/**
+ * Whether a refusal only makes the post wait (the daily limit, a
+ * disconnected account) rather than saying something is wrong with it. The
+ * leak guard is checked before these: a post that names a prospect will not
+ * pass by waiting, so the rep should hear that first, and a scheduled one
+ * should fail now rather than wait a day and fail then.
+ */
+export function onlyWaits(refusal: PublishRefusal | null): boolean {
+  return refusal?.reason === "daily-limit" || refusal?.reason === "account";
+}
+
 /** What a failed Unipile call leaves on the post. */
 export function failureError(kind: "refused" | "uncertain", detail: string): string {
   if (kind === "uncertain") return detail ? `${UNCERTAIN_PUBLISH_ERROR} (${detail})` : UNCERTAIN_PUBLISH_ERROR;

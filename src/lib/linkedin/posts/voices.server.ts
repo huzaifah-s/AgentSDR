@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { completeStructuredWithOpenRouter } from "@/lib/ai/server/structuredCompletion";
 import { users } from "@/lib/auth/schema";
 import { formatAiInstructions, type AiInstructionBlock } from "@/lib/crm/ai/instructions";
@@ -59,7 +59,8 @@ export async function getAuthorVoice(linkedinAccountId: string): Promise<AuthorV
   const [row] = await db
     .select({ voice: linkedinAuthorVoices, updatedByName: users.name })
     .from(linkedinAuthorVoices)
-    .leftJoin(users, eq(users.id, linkedinAuthorVoices.updatedBy))
+    // users.id is a uuid, updated_by text (as on linkedin_posts): compare as text.
+    .leftJoin(users, sql`${users.id}::text = ${linkedinAuthorVoices.updatedBy}`)
     .where(and(inOrg(linkedinAuthorVoices), eq(linkedinAuthorVoices.linkedinAccountId, linkedinAccountId)));
   if (!row) return emptyView(linkedinAccountId);
   return {

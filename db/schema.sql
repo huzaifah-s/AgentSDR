@@ -1842,11 +1842,11 @@ CREATE TABLE public.crm_settings (
     classification_instructions jsonb,
     calling_instructions jsonb,
     post_instructions jsonb,
-    CONSTRAINT crm_settings_post_instructions_shape_chk CHECK (((post_instructions IS NULL) OR ((jsonb_typeof(post_instructions) = 'array'::text) AND (length((post_instructions)::text) <= 60000)))),
     CONSTRAINT crm_settings_calling_instructions_shape_chk CHECK (((calling_instructions IS NULL) OR ((jsonb_typeof(calling_instructions) = 'array'::text) AND (length((calling_instructions)::text) <= 60000)))),
     CONSTRAINT crm_settings_confidence_chk CHECK (((auto_apply_confidence >= (0)::numeric) AND (auto_apply_confidence <= (1)::numeric))),
     CONSTRAINT crm_settings_human_send_only_chk CHECK ((human_send_only IS TRUE)),
-    CONSTRAINT crm_settings_instructions_shape_chk CHECK ((((draft_instructions IS NULL) OR ((jsonb_typeof(draft_instructions) = 'array'::text) AND (length((draft_instructions)::text) <= 60000))) AND ((classification_instructions IS NULL) OR ((jsonb_typeof(classification_instructions) = 'array'::text) AND (length((classification_instructions)::text) <= 60000)))))
+    CONSTRAINT crm_settings_instructions_shape_chk CHECK ((((draft_instructions IS NULL) OR ((jsonb_typeof(draft_instructions) = 'array'::text) AND (length((draft_instructions)::text) <= 60000))) AND ((classification_instructions IS NULL) OR ((jsonb_typeof(classification_instructions) = 'array'::text) AND (length((classification_instructions)::text) <= 60000))))),
+    CONSTRAINT crm_settings_post_instructions_shape_chk CHECK (((post_instructions IS NULL) OR ((jsonb_typeof(post_instructions) = 'array'::text) AND (length((post_instructions)::text) <= 60000))))
 );
 
 --
@@ -2442,6 +2442,18 @@ CREATE TABLE public.outreach_leads (
 );
 
 --
+-- Name: outreach_mailbox_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outreach_mailbox_credentials (
+    mailbox_id uuid NOT NULL,
+    settings jsonb NOT NULL,
+    encrypted_secret text NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+--
 -- Name: outreach_mailbox_queue; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2473,7 +2485,10 @@ CREATE TABLE public.outreach_mailboxes (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     working_hours jsonb DEFAULT '{"days": {"friday": {"to": "18:00", "from": "09:00", "enabled": true}, "monday": {"to": "18:00", "from": "09:00", "enabled": true}, "sunday": {"to": "18:00", "from": "09:00", "enabled": false}, "tuesday": {"to": "18:00", "from": "09:00", "enabled": true}, "saturday": {"to": "18:00", "from": "09:00", "enabled": false}, "thursday": {"to": "18:00", "from": "09:00", "enabled": true}, "wednesday": {"to": "18:00", "from": "09:00", "enabled": true}}, "timezone": "America/New_York"}'::jsonb NOT NULL,
-    organization_id uuid NOT NULL
+    organization_id uuid NOT NULL,
+    provider text DEFAULT 'google'::text NOT NULL,
+    imap_cursor jsonb,
+    CONSTRAINT outreach_mailboxes_provider_chk CHECK ((provider = ANY (ARRAY['google'::text, 'imap'::text])))
 );
 
 --
@@ -2912,25 +2927,25 @@ ALTER TABLE ONLY public.call_campaign_contacts
     ADD CONSTRAINT call_campaign_contacts_pkey PRIMARY KEY (id);
 
 --
+-- Name: call_campaign_stations call_campaign_stations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_stations
+    ADD CONSTRAINT call_campaign_stations_pkey PRIMARY KEY (campaign_id, station_id);
+
+--
 -- Name: call_campaign_step_runs call_campaign_step_runs_contact_step_uq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.call_campaign_step_runs
-    ADD CONSTRAINT call_campaign_step_runs_contact_step_uq UNIQUE (contact_id, step_key);;
+    ADD CONSTRAINT call_campaign_step_runs_contact_step_uq UNIQUE (contact_id, step_key);
 
 --
 -- Name: call_campaign_step_runs call_campaign_step_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.call_campaign_step_runs
-    ADD CONSTRAINT call_campaign_step_runs_pkey PRIMARY KEY (id);;
-
---
--- Name: call_campaign_stations call_campaign_stations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.call_campaign_stations
-    ADD CONSTRAINT call_campaign_stations_pkey PRIMARY KEY (campaign_id, station_id);;
+    ADD CONSTRAINT call_campaign_step_runs_pkey PRIMARY KEY (id);
 
 --
 -- Name: call_campaigns call_campaigns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -3507,20 +3522,18 @@ ALTER TABLE ONLY public.invitations
     ADD CONSTRAINT invitations_pkey PRIMARY KEY (id);
 
 --
--- Name: linkedin_author_voices linkedin_author_voices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.linkedin_author_voices
-    ADD CONSTRAINT linkedin_author_voices_pkey PRIMARY KEY (id);
-
-
---
 -- Name: linkedin_author_voices linkedin_author_voices_org_account_uq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.linkedin_author_voices
     ADD CONSTRAINT linkedin_author_voices_org_account_uq UNIQUE (organization_id, linkedin_account_id);
 
+--
+-- Name: linkedin_author_voices linkedin_author_voices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_author_voices
+    ADD CONSTRAINT linkedin_author_voices_pkey PRIMARY KEY (id);
 
 --
 -- Name: linkedin_posts linkedin_posts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -3570,6 +3583,13 @@ ALTER TABLE ONLY public.outreach_emails
 
 ALTER TABLE ONLY public.outreach_leads
     ADD CONSTRAINT outreach_leads_pkey PRIMARY KEY (id);
+
+--
+-- Name: outreach_mailbox_credentials outreach_mailbox_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outreach_mailbox_credentials
+    ADD CONSTRAINT outreach_mailbox_credentials_pkey PRIMARY KEY (mailbox_id);
 
 --
 -- Name: outreach_mailbox_queue outreach_mailbox_queue_mailbox_id_lead_id_key; Type: CONSTRAINT; Schema: public; Owner: -
@@ -3646,14 +3666,14 @@ ALTER TABLE ONLY public.sessions
 --
 
 ALTER TABLE ONLY public.station_message_jobs
-    ADD CONSTRAINT station_message_jobs_message_uq UNIQUE (whatsapp_message_id);;
+    ADD CONSTRAINT station_message_jobs_message_uq UNIQUE (whatsapp_message_id);
 
 --
 -- Name: station_message_jobs station_message_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.station_message_jobs
-    ADD CONSTRAINT station_message_jobs_pkey PRIMARY KEY (id);;
+    ADD CONSTRAINT station_message_jobs_pkey PRIMARY KEY (id);
 
 --
 -- Name: targeted_domains targeted_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -3968,6 +3988,12 @@ CREATE INDEX call_campaign_contacts_ai_due_idx ON public.call_campaign_contacts 
 CREATE INDEX call_campaign_contacts_campaign_stage_idx ON public.call_campaign_contacts USING btree (campaign_id, stage);
 
 --
+-- Name: call_campaign_stations_station_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX call_campaign_stations_station_idx ON public.call_campaign_stations USING btree (station_id);
+
+--
 -- Name: call_campaign_step_runs_call_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3984,12 +4010,6 @@ CREATE INDEX call_campaign_step_runs_message_idx ON public.call_campaign_step_ru
 --
 
 CREATE INDEX call_campaign_step_runs_open_idx ON public.call_campaign_step_runs USING btree (status) WHERE (status = 'started'::text);
-
---
--- Name: call_campaign_stations_station_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX call_campaign_stations_station_idx ON public.call_campaign_stations USING btree (station_id);
 
 --
 -- Name: call_campaigns_organization_idx; Type: INDEX; Schema: public; Owner: -
@@ -4707,7 +4727,6 @@ CREATE INDEX lead_person_idx ON public."Lead" USING btree ("personId");
 
 CREATE INDEX linkedin_author_voices_account_idx ON public.linkedin_author_voices USING btree (linkedin_account_id);
 
-
 --
 -- Name: linkedin_posts_account_idx; Type: INDEX; Schema: public; Owner: -
 --
@@ -5265,7 +5284,7 @@ ALTER TABLE ONLY public.api_keys
 --
 
 ALTER TABLE ONLY public.call_campaign_contacts
-    ADD CONSTRAINT call_campaign_contacts_ai_station_fk FOREIGN KEY (ai_station_id) REFERENCES public.calling_stations(id) ON DELETE SET NULL;;
+    ADD CONSTRAINT call_campaign_contacts_ai_station_fk FOREIGN KEY (ai_station_id) REFERENCES public.calling_stations(id) ON DELETE SET NULL;
 
 --
 -- Name: call_campaign_contacts call_campaign_contacts_campaign_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -5282,25 +5301,25 @@ ALTER TABLE ONLY public.call_campaign_contacts
     ADD CONSTRAINT call_campaign_contacts_person_fk FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE RESTRICT;
 
 --
--- Name: call_campaign_step_runs call_campaign_step_runs_contact_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.call_campaign_step_runs
-    ADD CONSTRAINT call_campaign_step_runs_contact_fk FOREIGN KEY (contact_id) REFERENCES public.call_campaign_contacts(id) ON DELETE CASCADE;;
-
---
 -- Name: call_campaign_stations call_campaign_stations_campaign_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.call_campaign_stations
-    ADD CONSTRAINT call_campaign_stations_campaign_fk FOREIGN KEY (campaign_id) REFERENCES public.call_campaigns(id) ON DELETE CASCADE;;
+    ADD CONSTRAINT call_campaign_stations_campaign_fk FOREIGN KEY (campaign_id) REFERENCES public.call_campaigns(id) ON DELETE CASCADE;
 
 --
 -- Name: call_campaign_stations call_campaign_stations_station_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.call_campaign_stations
-    ADD CONSTRAINT call_campaign_stations_station_fk FOREIGN KEY (station_id) REFERENCES public.calling_stations(id) ON DELETE CASCADE;;
+    ADD CONSTRAINT call_campaign_stations_station_fk FOREIGN KEY (station_id) REFERENCES public.calling_stations(id) ON DELETE CASCADE;
+
+--
+-- Name: call_campaign_step_runs call_campaign_step_runs_contact_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_step_runs
+    ADD CONSTRAINT call_campaign_step_runs_contact_fk FOREIGN KEY (contact_id) REFERENCES public.call_campaign_contacts(id) ON DELETE CASCADE;
 
 --
 -- Name: call_campaigns call_campaigns_organization_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -6037,14 +6056,12 @@ ALTER TABLE ONLY public.invitations
 ALTER TABLE ONLY public.linkedin_author_voices
     ADD CONSTRAINT linkedin_author_voices_account_fk FOREIGN KEY (linkedin_account_id) REFERENCES public."LinkedInAccount"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
-
 --
 -- Name: linkedin_author_voices linkedin_author_voices_organization_id_organizations_id_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.linkedin_author_voices
     ADD CONSTRAINT linkedin_author_voices_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
-
 
 --
 -- Name: linkedin_posts linkedin_posts_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -6117,6 +6134,13 @@ ALTER TABLE ONLY public.outreach_leads
     ADD CONSTRAINT outreach_leads_person_fk FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE RESTRICT;
 
 --
+-- Name: outreach_mailbox_credentials outreach_mailbox_credentials_mailbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outreach_mailbox_credentials
+    ADD CONSTRAINT outreach_mailbox_credentials_mailbox_id_fkey FOREIGN KEY (mailbox_id) REFERENCES public.outreach_mailboxes(id) ON DELETE CASCADE;
+
+--
 -- Name: outreach_mailbox_queue outreach_mailbox_queue_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6166,25 +6190,25 @@ ALTER TABLE ONLY public.qualification_jobs
     ADD CONSTRAINT qualification_jobs_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id);
 
 --
+-- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+--
 -- Name: station_message_jobs station_message_jobs_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.station_message_jobs
-    ADD CONSTRAINT station_message_jobs_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);;
+    ADD CONSTRAINT station_message_jobs_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
 
 --
 -- Name: station_message_jobs station_message_jobs_station_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.station_message_jobs
-    ADD CONSTRAINT station_message_jobs_station_fk FOREIGN KEY (station_id) REFERENCES public.calling_stations(id) ON DELETE CASCADE;;
-
---
--- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.sessions
-    ADD CONSTRAINT sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+    ADD CONSTRAINT station_message_jobs_station_fk FOREIGN KEY (station_id) REFERENCES public.calling_stations(id) ON DELETE CASCADE;
 
 --
 -- Name: targeted_domains targeted_domains_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -

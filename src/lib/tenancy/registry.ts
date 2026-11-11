@@ -72,6 +72,7 @@ export const SCOPED_TABLES: readonly ScopedTable[] = [
   snake("whatsapp_campaigns"),
   // LinkedIn posts (snake_case, this app's own)
   snake("linkedin_posts"),
+  snake("linkedin_author_voices"),
   // LinkedIn (ex-Prisma, camelCase columns)
   pascal("LinkedInAccount"),
   pascal("Campaign"),

@@ -42,7 +42,8 @@ import { createServer } from "node:https";
 import postgres from "postgres";
 import { createKnowledgeDocument } from "@/lib/crm/knowledge-service";
 import { encryptIntegrationCredentials } from "@/lib/integrations/credentials";
-import { draftPosts, postThemes, rewritePostDraft } from "@/lib/linkedin/posts/ai.server";
+import { draftPosts, postThemes, rewritePostDraft, suggestPostIdeas } from "@/lib/linkedin/posts/ai.server";
+import { learnAuthorVoice } from "@/lib/linkedin/posts/voices.server";
 import { UNCERTAIN_PUBLISH_ERROR, type PostDraftsResponse, type PostTheme } from "@/lib/linkedin/posts/contract";
 import type { PostCompletion, PostCompletionInput } from "@/lib/linkedin/posts/draft";
 import { createVoiceLoader, readPastPostsFromUnipile } from "@/lib/linkedin/posts/voice.server";
@@ -201,6 +202,8 @@ async function main() {
   let savedByok: Record<string, unknown> | null = null;
   /** The Phase 4 prospect seeded in A, removed at the end. */
   let prospect: { personId: string; companyId: string; callId: string } | null = null;
+  /** A's brief before the run (Phase 5), put back at the end; undefined = not touched. */
+  let savedBrief: { pipelineId: string; postInstructions: unknown } | undefined;
   const [savedUnipile] = await sql<{ id: string; payload: string }[]>`
     select c.provider_id as id, c.encrypted_payload as payload from grid_provider_credentials c join grid_providers g on g.id = c.provider_id
      where g.organization_id = ${orgA.id} and g.key = 'platform-unipile'`;
@@ -488,6 +491,91 @@ async function main() {
     );
     check(rewriteTheme.variants.length === 0 && rewriteTheme.withheld.length === 1 && rewriteTheme.source.kind === "conversations", "a rewrite from a theme is guarded and keeps its source", rewriteTheme);
 
+    // --------------------------------------- Phase 5: the brief and voices (A)
+    console.log("\nA: the content brief and writing voices");
+    const instructionsA = await call(a, "GET", "/api/crm/settings/ai-instructions");
+    check(
+      instructionsA.status === 200 && Array.isArray(instructionsA.json.postInstructions) && typeof instructionsA.json.postInstructionsCustomized === "boolean",
+      "the Instructions API carries the LinkedIn post brief",
+      instructionsA.json.postInstructionsCustomized,
+    );
+    const pipelineA = String(instructionsA.json.pipelineId ?? "");
+    const [briefRow] = await sql<{ post_instructions: unknown }[]>`select post_instructions from crm_settings where pipeline_id = ${pipelineA || null}`;
+    savedBrief = { pipelineId: pipelineA, postInstructions: briefRow?.post_instructions ?? null };
+    const briefPut = await call(a, "PUT", "/api/crm/settings/ai-instructions", {
+      pipelineId: pipelineA,
+      postInstructions: [
+        { id: "never-post", title: "What we never post", content: "E2E-NEVER-MARKER never mention Contoso." },
+        { id: "tone", title: "How we sound", content: "E2E-BRIEF-TONE formal and calm." },
+      ],
+    });
+    check(briefPut.status === 200 && briefPut.json.postInstructionsCustomized === true, "A saves its own brief", briefPut.json);
+
+    const voicePut = await call(a, "PUT", `/api/linkedin/posts/voices/${acc.id}`, {
+      instructions: [{ id: "sound", title: "How I sound", content: "E2E-VOICE-MARKER casual, short sentences." }],
+      examplePosts: ["E2E-EXAMPLE-POST Shipping beats planning."],
+    });
+    check(voicePut.status === 200 && (voicePut.json.voice as { examplePosts: string[] })?.examplePosts.length === 1, "A saves a writing voice for its account", voicePut.json);
+    const [voiceRow] = await sql<{ updated_by: string | null; organization_id: string }[]>`select updated_by, organization_id from linkedin_author_voices where linkedin_account_id = ${acc.id}`;
+    check(voiceRow?.organization_id === orgA.id && Boolean(voiceRow.updated_by), "the voice is A's, with who saved it", voiceRow);
+    const voiceGet = await call(a, "GET", `/api/linkedin/posts/voices/${acc.id}`);
+    check(voiceGet.text.includes("E2E-VOICE-MARKER"), "A reads the voice back", voiceGet.status);
+    const composerA = await call(a, "GET", "/linkedin/posts/new");
+    check(composerA.text.includes("E2E-VOICE-MARKER") && composerA.text.includes("?voice="), "the composer shows the account's voice in one line, with Edit", composerA.status);
+    const badVoice = await call(a, "PUT", `/api/linkedin/posts/voices/${acc.id}`, { examplePosts: ["a", "b", "c", "d", "e", "f"] });
+    check(badVoice.status === 400, "more than 5 example posts are refused", badVoice.json);
+
+    const layered = await runInOrganization(orgA.id, () => draftPosts({ linkedinAccountId: acc.id, topic: "Make this one formal", knowledgeDocumentIds: [] }, deps(["L1", "L2", "L3"])));
+    const layeredSystem = prompts.at(-1)!.systemPrompt;
+    const iNever = layeredSystem.indexOf("E2E-NEVER-MARKER");
+    const iVoice = layeredSystem.indexOf("E2E-VOICE-MARKER");
+    check(iNever > -1 && iVoice > iNever && layeredSystem.includes("never to post always wins"), "the draft prompt has the brief, then the voice, and never-post wins", { iNever, iVoice });
+    check(prompts.at(-1)!.userPrompt.includes("E2E-EXAMPLE-POST") && prompts.at(-1)!.userPrompt.includes("Make this one formal"), "example posts and this draft's notes reach the prompt");
+    check(layered.variants.length === 3, "the layered draft comes back");
+
+    const ideas409 = await call(a, "POST", "/api/linkedin/posts/ideas", {});
+    check(ideas409.status === 409 && String(ideas409.json.error).includes("OpenRouter"), "ideas answer 409 without OpenRouter", ideas409.json);
+    const learn409 = await call(a, "POST", `/api/linkedin/posts/voices/${acc.id}/learn`);
+    check(learn409.status === 409 && String(learn409.json.error).includes("OpenRouter"), "Learn from my posts answers 409 without OpenRouter", learn409.json);
+
+    const ideaPrompts: PostCompletionInput[] = [];
+    const fakeIdeas: PostCompletion = async (input) => {
+      ideaPrompts.push(input);
+      const context = JSON.parse(input.userPrompt) as { knowledge: { ref: string }[]; themes: { ref: string }[] };
+      const refK = context.knowledge[0]?.ref;
+      const refT = context.themes[0]?.ref;
+      const list = [
+        { title: "E2E idea one", angle: "From the public note.", pillar: null, basedOn: refK ? [refK] : [] },
+        { title: "E2E idea two", angle: "From a theme.", pillar: null, basedOn: refT ? [refT] : [] },
+        { title: "E2E idea three", angle: "An opinion.", pillar: "Onboarding", basedOn: [] },
+        { title: "E2E idea four", angle: "Zelda Quill asked about it.", pillar: null, basedOn: [] },
+        { title: "E2E idea five", angle: "Another opinion.", pillar: null, basedOn: [] },
+      ];
+      const text = JSON.stringify({ ideas: list });
+      input.accept(text);
+      return { text, provider: "fake", model: "fake/e2e-model" };
+    };
+    const ideas = await runInOrganization(orgA.id, () => suggestPostIdeas({ includeThemes: true }, { complete: fakeThemes, completeIdeas: fakeIdeas, skipOpenRouterCheck: true }));
+    const ideaSent = ideaPrompts.at(-1)!;
+    check(ideaSent.userPrompt.includes("E2E-PUBLIC-MARKER") && !ideaSent.userPrompt.includes("E2E-PRIVATE-MARKER") && !ideaSent.userPrompt.includes("E2E-END-OF-CASE"), "ideas read only Knowledge marked public");
+    check(ideaSent.systemPrompt.includes("E2E-NEVER-MARKER"), "ideas follow the brief");
+    check(ideas.themes > 0 && ideas.withheld === 1 && ideas.ideas.length === 4, "an idea naming the prospect is held back", ideas);
+    const themeIdea = ideas.ideas.find((idea) => idea.source.kind === "conversations");
+    const opened = themeIdea ? await call(a, "POST", "/api/linkedin/posts", { linkedinAccountId: acc.id, body: "", source: themeIdea.source }) : null;
+    check(opened?.status === 201, "an idea from a theme opens as a draft with its sealed source", opened?.json);
+
+    const learned = await runInOrganization(orgA.id, () =>
+      learnAuthorVoice(acc.id, {
+        complete: async (input) => {
+          const text = JSON.stringify({ sound: "- I keep it short.", format: "", language: "", phrases: "", topics: "" });
+          input.accept(text);
+          return { text, provider: "fake", model: "fake/e2e-model" };
+        },
+      }),
+    );
+    const [voiceAfterLearn] = await sql<{ instructions: unknown }[]>`select instructions from linkedin_author_voices where linkedin_account_id = ${acc.id}`;
+    check(learned.postsRead === 2 && learned.instructions[0]?.title === "How I sound" && JSON.stringify(voiceAfterLearn.instructions).includes("E2E-VOICE-MARKER"), "Learn from my posts reads the account's own posts and saves nothing", learned);
+
     // ------------------------------------------------------- organization B
     console.log("\nB: a second organization, Unipile connected, one account of its own");
     const stamp = Date.now();
@@ -589,6 +677,35 @@ async function main() {
     const bThemesRoute = await call(b, "POST", "/api/linkedin/posts/themes", {});
     check(bThemesRoute.status === 409, "B's themes route stops at the OpenRouter check", bThemesRoute.json);
 
+    // Phase 5: B cannot read or change A's brief or voices, and carries none of them.
+    const bInstructions = await call(b, "GET", "/api/crm/settings/ai-instructions");
+    check(!bInstructions.text.includes("E2E-NEVER-MARKER") && bInstructions.json.postInstructionsCustomized !== true, "B's Instructions show the default brief, none of A's", bInstructions.json.postInstructionsCustomized);
+    const bBriefPut = await call(b, "PUT", "/api/crm/settings/ai-instructions", { pipelineId: pipelineA, postInstructions: [{ id: "x", title: "B", content: "B was here" }] });
+    check(bBriefPut.status >= 400 && bBriefPut.status < 500, "B cannot write A's brief through A's pipeline id", bBriefPut.status);
+    const [briefAfterB] = await sql<{ post_instructions: unknown }[]>`select post_instructions from crm_settings where pipeline_id = ${pipelineA}`;
+    check(JSON.stringify(briefAfterB.post_instructions).includes("E2E-NEVER-MARKER") && !JSON.stringify(briefAfterB.post_instructions).includes("B was here"), "A's brief is unchanged after B's attempt");
+    for (const [method, url, body] of [
+      ["GET", `/api/linkedin/posts/voices/${acc.id}`],
+      ["PUT", `/api/linkedin/posts/voices/${acc.id}`, { instructions: [{ id: "sound", title: "x", content: "B was here" }] }],
+      ["POST", `/api/linkedin/posts/voices/${acc.id}/learn`],
+    ] as [string, string, unknown?][]) {
+      const res = await call(b, method, url, body);
+      check(res.status === 404 && !res.text.includes("E2E-VOICE-MARKER"), `B: ${method} ${url.replace(acc.id, "<A's account>")} → 404`, `${res.status} ${res.text.slice(0, 120)}`);
+    }
+    const [voiceAfterB] = await sql<{ instructions: unknown; n: number }[]>`select instructions, (select count(*)::int from linkedin_author_voices where organization_id = ${orgB}) as n from linkedin_author_voices where linkedin_account_id = ${acc.id}`;
+    check(JSON.stringify(voiceAfterB.instructions).includes("E2E-VOICE-MARKER") && voiceAfterB.n === 0, "A's voice is unchanged and B has no voice rows", voiceAfterB);
+    const bOwnVoice = await call(b, "PUT", `/api/linkedin/posts/voices/${accB.id}`, { instructions: [{ id: "sound", title: "How I sound", content: "B's own voice" }] });
+    check(bOwnVoice.status === 200, "B saves a voice for its own account", bOwnVoice.status);
+    const promptsBeforeB5 = prompts.length;
+    await runInOrganization(orgB, () => draftPosts({ linkedinAccountId: accB.id, topic: "B again", knowledgeDocumentIds: [] }, deps(["A", "B", "C"])));
+    const bSystem = prompts.at(-1)!.systemPrompt;
+    check(prompts.length === promptsBeforeB5 + 1 && !bSystem.includes("E2E-NEVER-MARKER") && !bSystem.includes("E2E-VOICE-MARKER") && bSystem.includes("B's own voice"), "B's draft has B's voice and the default brief, none of A's");
+    const bIdeas = await runInOrganization(orgB, () => suggestPostIdeas({ includeThemes: true }, { complete: fakeThemes, completeIdeas: fakeIdeas, skipOpenRouterCheck: true }));
+    const bIdeaSent = ideaPrompts.at(-1)!;
+    check(bIdeas.themes === 0 && !bIdeaSent.userPrompt.includes("E2E-PUBLIC-MARKER") && !bIdeaSent.systemPrompt.includes("E2E-NEVER-MARKER"), "B's ideas read none of A's Knowledge, themes or brief", bIdeas);
+    const bIdeasRoute = await call(b, "POST", "/api/linkedin/posts/ideas", {});
+    check(bIdeasRoute.status === 409, "B's ideas route stops at the OpenRouter check", bIdeasRoute.json);
+
     // Positive control: B's own draft works and publishes through its own account.
     const own = await call(b, "POST", "/api/linkedin/posts", { linkedinAccountId: accB.id, body: "B's own post" });
     check(own.status === 201, "B creates a draft on its own account", own.json);
@@ -597,6 +714,7 @@ async function main() {
     const listA = await call(a, "GET", "/api/linkedin/posts?pageSize=100");
     check(!listA.text.includes((own.json.post as PostJson).id), "A's list does not show B's post");
   } finally {
+    if (savedBrief?.pipelineId) await sql`update crm_settings set post_instructions = ${savedBrief.postInstructions === null ? null : sql.json(savedBrief.postInstructions as never)} where pipeline_id = ${savedBrief.pipelineId}`;
     if (prospect) {
       await sql`delete from call_sessions where id = ${prospect.callId}`;
       await sql`delete from people where id = ${prospect.personId}`;

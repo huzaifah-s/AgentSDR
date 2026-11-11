@@ -150,6 +150,12 @@ export const crmSettings = pgTable(
      * in src/lib/calls/callingInstructions.ts. scripts/add-crm-calling-instructions.ts.
      */
     callingInstructions: jsonb("calling_instructions").$type<AiInstructionBlock[]>(),
+    /**
+     * The organization's LinkedIn content brief, as titled blocks; null = the
+     * defaults in src/lib/linkedin/posts/postInstructions.ts.
+     * scripts/add-crm-post-instructions.ts.
+     */
+    postInstructions: jsonb("post_instructions").$type<AiInstructionBlock[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -167,6 +173,10 @@ export const crmSettings = pgTable(
     check(
       "crm_settings_calling_instructions_shape_chk",
       sql`${table.callingInstructions} IS NULL OR (jsonb_typeof(${table.callingInstructions}) = 'array' AND length(${table.callingInstructions}::text) <= 60000)`,
+    ),
+    check(
+      "crm_settings_post_instructions_shape_chk",
+      sql`${table.postInstructions} IS NULL OR (jsonb_typeof(${table.postInstructions}) = 'array' AND length(${table.postInstructions}::text) <= 60000)`,
     ),
     check(
       "crm_settings_instructions_shape_chk",

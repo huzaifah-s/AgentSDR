@@ -114,7 +114,7 @@ export async function readThemeSourceSet({ until, limit }: { until: Date; limit:
         .where(and(inOrg(people), inArray(people.id, personIds)))
     : [];
 
-  return { items: kept.map(({ time: _time, ...row }) => row), people: found };
+  return { items: kept.map((row) => ({ personId: row.personId, channel: row.channel, at: row.at, text: row.text })), people: found };
 }
 
 /** The leak guard's terms for a theme read at `readAt`: every person in the 30 days of replies and calls before it. */

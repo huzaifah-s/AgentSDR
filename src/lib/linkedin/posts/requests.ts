@@ -334,6 +334,69 @@ export function isImageId(value: string): boolean {
   return UUID_PATTERN.test(value);
 }
 
+export type AuthorVoiceInput = { instructions: { id: string; title: string; content: string }[] | null; examplePosts: string[] };
+
+const VOICE_BLOCK_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_VOICE_BLOCKS = 20;
+const MAX_VOICE_TITLE = 200;
+const MAX_VOICE_CONTENT = 4000;
+
+/**
+ * PUT /voices/[accountId] — `{ instructions: blocks | null, examplePosts:
+ * string[] }`. Empty blocks are dropped (null when none are left); at most 5
+ * example posts, each at most 3,000 characters.
+ */
+export function parseAuthorVoice(input: unknown, maxExamples = 5): Parsed<AuthorVoiceInput> {
+  const object = asObject(input);
+  if (!object) return fail("Expected a JSON object");
+  const unknown = Object.keys(object).filter((key) => key !== "instructions" && key !== "examplePosts");
+  if (unknown.length) return fail(`Unknown field(s): ${unknown.join(", ")}`);
+  let instructions: AuthorVoiceInput["instructions"] = null;
+  if (object.instructions !== undefined && object.instructions !== null) {
+    if (!Array.isArray(object.instructions) || object.instructions.length > MAX_VOICE_BLOCKS) return fail(`instructions must be at most ${MAX_VOICE_BLOCKS} blocks`);
+    const ids = new Set<string>();
+    const blocks: { id: string; title: string; content: string }[] = [];
+    for (const [index, value] of object.instructions.entries()) {
+      const block = asObject(value);
+      if (!block || typeof block.id !== "string" || !VOICE_BLOCK_ID.test(block.id) || typeof block.title !== "string" || typeof block.content !== "string") {
+        return fail(`Block ${index + 1} needs an id, a title and its text`);
+      }
+      if (Object.keys(block).some((key) => !["id", "title", "content"].includes(key))) return fail(`Block ${index + 1} has unknown fields`);
+      if (ids.has(block.id)) return fail(`Block ${index + 1} repeats an id`);
+      ids.add(block.id);
+      const title = block.title.trim();
+      const content = block.content.replace(/\r\n?/g, "\n").trim();
+      if (title.length > MAX_VOICE_TITLE) return fail(`“${title.slice(0, 40)}” has a title over ${MAX_VOICE_TITLE} characters`);
+      if (content.length > MAX_VOICE_CONTENT) return fail(`“${title || "Untitled"}” is over ${MAX_VOICE_CONTENT.toLocaleString("en-US")} characters`);
+      if (content) blocks.push({ id: block.id, title, content });
+    }
+    instructions = blocks.length ? blocks : null;
+  }
+  const rawExamples = object.examplePosts ?? [];
+  if (!Array.isArray(rawExamples)) return fail("examplePosts must be a list of posts");
+  const examplePosts: string[] = [];
+  for (const value of rawExamples) {
+    if (typeof value !== "string") return fail("examplePosts must be a list of posts");
+    const post = value.replace(/\r\n?/g, "\n").trim();
+    if (!post) continue;
+    if (post.length > MAX_POST_LENGTH) return fail(`An example post can be at most ${MAX_POST_LENGTH.toLocaleString("en-US")} characters.`);
+    examplePosts.push(post);
+  }
+  if (examplePosts.length > maxExamples) return fail(`At most ${maxExamples} example posts.`);
+  return ok({ instructions, examplePosts });
+}
+
+export type PostIdeasInput = { includeThemes: boolean };
+
+/** POST /ideas — `{ includeThemes? }` (default true). */
+export function parsePostIdeas(input: unknown): Parsed<PostIdeasInput> {
+  const object = input === undefined || input === null ? {} : asObject(input);
+  if (!object) return fail("Expected a JSON object");
+  if (Object.keys(object).some((key) => key !== "includeThemes")) return fail("Unknown fields");
+  if (object.includeThemes !== undefined && typeof object.includeThemes !== "boolean") return fail("includeThemes must be true or false");
+  return ok({ includeThemes: object.includeThemes !== false });
+}
+
 export type SchedulePostInput = { date: string; time: string };
 
 /**

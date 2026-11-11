@@ -58,6 +58,8 @@ type Props = {
   /** OpenRouter is connected: the composer shows "Write with AI". */
   aiReady: boolean;
   knowledge: PostKnowledgeOption[];
+  /** Each account's writing voice in one line (Phase 5); an account without one is absent. */
+  voiceLines: Record<string, string>;
 };
 
 const accountName = (account: LinkedinPostAccount | null | undefined) => account?.name || account?.username || "this account";
@@ -85,7 +87,7 @@ function imageSize(file: File): Promise<{ width: number; height: number } | null
   });
 }
 
-export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsLabel, postsPerDay, publishedToday, timeZone, postTimes, aiReady, knowledge }: Props) {
+export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsLabel, postsPerDay, publishedToday, timeZone, postTimes, aiReady, knowledge, voiceLines }: Props) {
   const router = useRouter();
   const dialogs = useDialogs();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -382,6 +384,14 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
                     ))}
                   </Select.Content>
                 </Select.Root>
+              )}
+              {!readOnly && account && (
+                <p className="mt-1.5 truncate text-paragraph-xs text-text-sub-600" title={voiceLines[account.id]}>
+                  {voiceLines[account.id] ? <>Voice: {voiceLines[account.id]}</> : "No writing voice yet."}{" "}
+                  <Link className="text-primary-base hover:underline" href={`/settings/linkedin-accounts?voice=${encodeURIComponent(account.id)}`}>
+                    {voiceLines[account.id] ? "Edit" : "Set one"}
+                  </Link>
+                </p>
               )}
               {!readOnly && account && (
                 <p className={cn("mt-1.5 text-paragraph-xs", atLimit ? "text-warning-base" : "text-text-sub-600")}>

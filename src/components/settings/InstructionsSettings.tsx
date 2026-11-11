@@ -14,8 +14,9 @@ import {
 import { asObject, crmFetch, errorMessage } from "@/components/crm/crm-utils";
 import type { AiInstructionBlock } from "@/lib/crm/ai/instructions";
 import { DEFAULT_CALLING_INSTRUCTIONS } from "@/lib/calls/callingInstructions";
+import { DEFAULT_POST_INSTRUCTIONS } from "@/lib/linkedin/posts/postInstructions";
 
-type Saved = Record<InstructionField, AiInstructionBlock[]> & { callingInstructionsCustomized: boolean };
+type Saved = Record<InstructionField, AiInstructionBlock[]> & { callingInstructionsCustomized: boolean; postInstructionsCustomized: boolean };
 
 function parseBlocks(value: unknown): AiInstructionBlock[] {
   if (!Array.isArray(value)) return [];
@@ -46,6 +47,8 @@ export default function InstructionsSettings() {
         classificationInstructions: parseBlocks(data.classificationInstructions),
         callingInstructions: parseBlocks(data.callingInstructions),
         callingInstructionsCustomized: data.callingInstructionsCustomized === true,
+        postInstructions: parseBlocks(data.postInstructions),
+        postInstructionsCustomized: data.postInstructionsCustomized === true,
       });
     } catch (cause) {
       setError(errorMessage(cause));
@@ -99,7 +102,9 @@ export default function InstructionsSettings() {
             onSaved={(blocks) => setSaved((current) => (current ? { ...current, [field]: blocks } : current))}
             {...(field === "callingInstructions"
               ? { defaults: DEFAULT_CALLING_INSTRUCTIONS, customized: saved.callingInstructionsCustomized }
-              : {})}
+              : field === "postInstructions"
+                ? { defaults: DEFAULT_POST_INSTRUCTIONS, customized: saved.postInstructionsCustomized }
+                : {})}
           />
         </SegmentedControl.Content>
       ))}

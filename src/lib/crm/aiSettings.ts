@@ -17,6 +17,7 @@ import {
 } from "./ai/instructions";
 import { crmSettings } from "./schema";
 import { DEFAULT_CALLING_INSTRUCTIONS } from "@/lib/calls/callingInstructions";
+import { DEFAULT_POST_INSTRUCTIONS } from "@/lib/linkedin/posts/postInstructions";
 
 export type CrmAiInstructions = {
   pipelineId: string;
@@ -26,6 +27,10 @@ export type CrmAiInstructions = {
   callingInstructions: AiInstructionBlock[];
   /** False while the calling instructions are the defaults. */
   callingInstructionsCustomized: boolean;
+  /** The LinkedIn content brief: the organization's own, or the defaults while it has none. */
+  postInstructions: AiInstructionBlock[];
+  /** False while the brief is the defaults. */
+  postInstructionsCustomized: boolean;
 };
 
 export type CrmAiInstructionsPatch = {
@@ -34,6 +39,8 @@ export type CrmAiInstructionsPatch = {
   classificationInstructions?: AiInstructionBlock[] | null;
   /** null (or an empty list): back to the defaults. */
   callingInstructions?: AiInstructionBlock[] | null;
+  /** null (or an empty list): back to the defaults. */
+  postInstructions?: AiInstructionBlock[] | null;
 };
 
 const BLOCK_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -85,7 +92,7 @@ function parseInstructionBlocks(value: unknown, label: string): AiInstructionBlo
 /** Validates a PUT body; only the fields present are returned. Pure. */
 export function parseAiInstructionsPatch(body: unknown): CrmAiInstructionsPatch {
   assertObject(body);
-  assertExactKeys(body, ["pipelineId", "draftInstructions", "classificationInstructions", "callingInstructions"]);
+  assertExactKeys(body, ["pipelineId", "draftInstructions", "classificationInstructions", "callingInstructions", "postInstructions"]);
   const patch: CrmAiInstructionsPatch = {};
   if (body.pipelineId !== undefined) patch.pipelineId = parseUuid(body.pipelineId, "pipelineId");
   if (body.draftInstructions !== undefined) {
@@ -97,6 +104,9 @@ export function parseAiInstructionsPatch(body: unknown): CrmAiInstructionsPatch 
   if (body.callingInstructions !== undefined) {
     patch.callingInstructions = parseInstructionBlocks(body.callingInstructions, "Calling instructions");
   }
+  if (body.postInstructions !== undefined) {
+    patch.postInstructions = parseInstructionBlocks(body.postInstructions, "LinkedIn post instructions");
+  }
   return patch;
 }
 
@@ -107,17 +117,21 @@ export async function getCrmAiInstructions(pipelineId?: string): Promise<CrmAiIn
       draftInstructions: crmSettings.draftInstructions,
       classificationInstructions: crmSettings.classificationInstructions,
       callingInstructions: crmSettings.callingInstructions,
+      postInstructions: crmSettings.postInstructions,
     })
     .from(crmSettings)
     .where(eq(crmSettings.pipelineId, resolved))
     .limit(1);
   const calling = row?.callingInstructions?.length ? row.callingInstructions : null;
+  const posts = row?.postInstructions?.length ? row.postInstructions : null;
   return {
     pipelineId: resolved,
     draftInstructions: row?.draftInstructions ?? [],
     classificationInstructions: row?.classificationInstructions ?? [],
     callingInstructions: calling ?? DEFAULT_CALLING_INSTRUCTIONS,
     callingInstructionsCustomized: calling !== null,
+    postInstructions: posts ?? DEFAULT_POST_INSTRUCTIONS,
+    postInstructionsCustomized: posts !== null,
   };
 }
 
@@ -128,8 +142,10 @@ export async function updateCrmAiInstructions(input: unknown): Promise<CrmAiInst
     draftInstructions?: AiInstructionBlock[] | null;
     classificationInstructions?: AiInstructionBlock[] | null;
     callingInstructions?: AiInstructionBlock[] | null;
+    postInstructions?: AiInstructionBlock[] | null;
   } = {};
   if (patch.callingInstructions !== undefined) changes.callingInstructions = patch.callingInstructions;
+  if (patch.postInstructions !== undefined) changes.postInstructions = patch.postInstructions;
   if (patch.draftInstructions !== undefined) changes.draftInstructions = patch.draftInstructions;
   if (patch.classificationInstructions !== undefined) {
     changes.classificationInstructions = patch.classificationInstructions;
@@ -162,6 +178,26 @@ export async function loadCallingInstructions(): Promise<AiInstructionBlock[] | 
     return row?.callingInstructions?.length ? row.callingInstructions : null;
   } catch (error) {
     console.error("[calls] loading the calling instructions failed; using the defaults", error);
+    return null;
+  }
+}
+
+/**
+ * The LinkedIn content brief a post draft follows, from the organization's
+ * default pipeline; null = the defaults. A failure reads as null: a draft
+ * must not fail over its brief.
+ */
+export async function loadPostInstructions(): Promise<AiInstructionBlock[] | null> {
+  try {
+    const resolved = await resolvePipelineId();
+    const [row] = await db
+      .select({ postInstructions: crmSettings.postInstructions })
+      .from(crmSettings)
+      .where(eq(crmSettings.pipelineId, resolved))
+      .limit(1);
+    return row?.postInstructions?.length ? row.postInstructions : null;
+  } catch (error) {
+    console.error("[linkedin/posts] loading the post instructions failed; using the defaults", error);
     return null;
   }
 }

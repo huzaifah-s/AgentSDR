@@ -6,7 +6,9 @@ was built and what changed from the plan: "Phase 1 as built", under Phase 1.
 Phase 2 (AI drafts) built (12 Nov 2026), not yet verified end to end: see
 "Phase 2 as built". Phase 3 (scheduling) built (12 Nov 2026, `5dcfcb8`),
 its e2e not run. Phase 4 (posts from what prospects say) built (12 Nov
-2026), its e2e not run: see "Phase 4 as built". Phase 5 planned.
+2026), its e2e not run: see "Phase 4 as built". Phase 5 (the content brief
+and each person's writing voice) built (12 Nov 2026), its e2e and
+migrations not run: see "Phase 5 as built".
 
 Waiting on (Phase 1):
 
@@ -54,21 +56,37 @@ Waiting on (Phase 2):
       `scripts/seed-langfuse-prompts.ts --org <id>` (with the user's yes).
       Until then those organizations use the copies in code.
 
-Waiting on (Phases 3 and 4):
+Waiting on (Phases 3, 4 and 5):
 
-- [ ] **Run the e2e** covering Phases 2–4: `scripts/e2e/linkedin-posts.ts`
-      has the Phase 3 and Phase 4 checks (themes 409 without OpenRouter; a
-      seeded prospect's call read, redacted, a theme and a draft naming
-      them dropped or withheld; the sealed source saved without ids; a
-      tampered source refused; scheduling and publishing an edited post
-      that names them refused; B reading none of A's prospects and unable
-      to use A's theme). Never run. Same setup as Phase 2's.
-- [ ] **Real AI calls**, with the user's yes: one themes call and one draft
-      from a theme on a real organization's OpenRouter key, on its real
-      replies and calls; check the summaries name nobody.
-- [ ] **Prompts in Langfuse**: `linkedin/post-themes`, `-user` and `-tool`,
-      and the changed `linkedin/post-system` / `linkedin/post-user`, reach
-      an existing project only through
+- [ ] **Run the e2e** covering Phases 2–5: `scripts/e2e/linkedin-posts.ts`
+      has the Phase 3, 4 and 5 checks. Phase 4: themes 409 without
+      OpenRouter; a seeded prospect's call read, redacted, a theme and a
+      draft naming them dropped or withheld; the sealed source saved
+      without ids; a tampered source refused; scheduling and publishing an
+      edited post that names them refused; B reading none of A's prospects
+      and unable to use A's theme. Phase 5: A's brief and voice reach the
+      draft prompt in order; ideas read only public Knowledge and open as
+      drafts; Learn from my posts saves nothing; B cannot read or change
+      A's brief or voices, and its drafts and ideas carry none of them.
+      Never run. Same setup as Phase 2's, plus the two Phase 5 migrations
+      below on the disposable database.
+- [ ] **Live migrations**, with the user's yes, on production's
+      `DATABASE_URL`: `bun run scripts/add-crm-post-instructions.ts` (one
+      column on `crm_settings`) and
+      `bun run scripts/create-linkedin-author-voices.ts` (one table). Both
+      re-runnable. Until they run, the Instructions page and every post
+      draft fail in production (`post_instructions` and
+      `linkedin_author_voices` are read). Both were applied to a disposable
+      local database built from `db/schema.sql`, where re-running them
+      changed nothing and `check-organization-scope.ts --contract` passed.
+- [ ] **Real AI calls**, with the user's yes, on a real organization's
+      OpenRouter key: one themes call and one draft from a theme on its
+      real replies and calls (check the summaries name nobody), one ideas
+      call, one Learn from my posts, and one draft with a brief and a voice.
+- [ ] **Prompts in Langfuse**: `linkedin/post-themes`, `-user`, `-tool`,
+      `linkedin/post-ideas`, `-tool`, `linkedin/voice-summary`, `-tool`, and
+      the changed `linkedin/post-system` / `linkedin/post-user`, reach an
+      existing project only through
       `scripts/seed-langfuse-prompts.ts --org <id>` (`--update` for the two
       changed ones), with the user's yes.
 - [ ] **One real scheduled publish** through the job's endpoint
@@ -511,6 +529,62 @@ and an SDR posting about the same pillar should not sound alike.
   tone and format over the brief's *How we sound*. A draft's own notes
   ("make this one formal") win over the author's defaults for that post.
   Both reach the prompt as variables (`{{authorVoice}}`, `{{postInstructions}}`).
+
+### Phase 5 as built (12 Nov 2026)
+
+- **Public switch**: "Public (may be used in posts)" in the Knowledge
+  editor is the `public` tag itself (`withPublicTag` / `hasPublicTag` in
+  `contract.ts`): turning it on adds the tag, typing `public` in Tags turns
+  it on. The tag now matches in any case. A "Public" filter and a Public
+  badge on the list. No schema change.
+- **The brief**: `postInstructions.ts` holds the five default blocks (the
+  "What we never post" one has id `never-post`) and the voice hints;
+  `crm_settings.post_instructions` (`scripts/add-crm-post-instructions.ts`,
+  Drizzle `src/lib/crm/schema.ts`, `db/schema.sql`) with the same shape
+  CHECK as `calling_instructions`. The Instructions API and page gained a
+  "LinkedIn posts" tab with defaults and Reset, exactly like Calling (the
+  same editor and the same permission). `loadPostInstructions` reads it;
+  a failure falls back to the defaults.
+- **Layers in the prompt**: `linkedin/post-system` takes
+  `{{postInstructions}}` (the brief, or the defaults), then
+  `{{authorVoice}}` (the account's blocks), then says where they disagree:
+  never-post always wins, the voice decides tone and format over the
+  brief, the draft's own notes (topic, theme, rewrite instruction) win for
+  that post. Example posts go in the context JSON as `voiceExamples`; their
+  hashtags count like past posts'. "Never post wins" is a rule in the
+  prompt, not a code check: what an organization lists there is free text.
+- **Voices**: table `linkedin_author_voices` (scoped, in the registry and
+  `OWNED_TABLES`, migration `scripts/create-linkedin-author-voices.ts`,
+  `db/schema.sql`), unique per (organization, account), account FK named
+  for drizzle-kit and cascading like `linkedin_posts`. Routes
+  `GET/PUT /api/linkedin/posts/voices/[accountId]` (another organization's
+  account is 404) and `POST …/learn`. The Writing voice dialog
+  (`WritingVoiceDialog.tsx`) is in the account row's menu in
+  `AccountsClient.tsx`; the composer's one line links to
+  `/settings/linkedin-accounts?voice=<id>`, which opens it.
+- **Learn from my posts** reads 20 of the account's own posts (reposts
+  left out) and asks `linkedin/voice-summary` for five fields mapped onto
+  the hinted blocks; it fills the dialog and saves nothing.
+- **Ideas**: "Suggest ideas" on the Posts page (when OpenRouter is ready)
+  → `POST /api/linkedin/posts/ideas`. The brief, Knowledge tagged public
+  (read whole) and, unless unticked, prospects' themes, read first with
+  their own call, so ideas with themes are two model calls. Sources reach
+  the model by ref (K1, T1), so no seal or id leaves the server; each idea
+  maps back to a `source` (a theme's sealed `conversations` source, its
+  Knowledge, or its topic). Ideas are leak-guarded when themes were read.
+  "Write this" creates an empty draft with that source on the chosen
+  account and opens it; the AI panel starts from the draft's topic,
+  Knowledge and theme.
+- **Prompts as written**: each new call is a system prompt plus a tool
+  description in the registry (`linkedin/post-ideas` + `-tool`,
+  `linkedin/voice-summary` + `-tool`); their user messages are the context
+  JSON alone, so no wording lives in code.
+- Not checked: whether `drizzle-kit push` is quiet about the new table and
+  column (Phase 1 checked this for `linkedin_posts`; the keys are named the
+  same way).
+- Tests: `brief.test.ts` (defaults, layers, voice parsing, the one line,
+  the public switch, the voice summary, ideas), more in
+  `aiSettings.test.ts` and `linkedin.test.ts`.
 
 ## Decisions
 

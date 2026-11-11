@@ -12,6 +12,7 @@ import {
   RiBuilding2Line,
   RiCalendarLine,
   RiFileTextLine,
+  RiGlobalLine,
   RiMoreLine,
   RiPencilLine,
   RiPriceTag3Line,
@@ -28,12 +29,14 @@ import * as Input from "@/components/alignui/input";
 import * as Modal from "@/components/alignui/modal";
 import * as SegmentedControl from "@/components/alignui/segmented-control";
 import * as Select from "@/components/alignui/select";
+import * as Switch from "@/components/alignui/switch";
 import * as Textarea from "@/components/alignui/textarea";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { EmptyState } from "@/components/page/EmptyState";
 import { Callout, Field } from "@/components/settings/SettingsKit";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { ListSkeleton } from "@/components/settings/SettingsSkeletons";
+import { hasPublicTag, withPublicTag } from "@/lib/linkedin/posts/contract";
 import { cn } from "@/utils/cn";
 import { asList, asObject, crmFetch, errorMessage, formatDate } from "./crm-utils";
 
@@ -78,6 +81,8 @@ export default function CrmKnowledgeClient() {
   const [editor, setEditor] = useState<Document | null>(null);
   const [view, setView] = useState<View>("active");
   const [search, setSearch] = useState("");
+  /** Only documents marked public (may be used in LinkedIn posts). */
+  const [publicOnly, setPublicOnly] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async (showLoading = true) => {
@@ -147,11 +152,12 @@ export default function CrmKnowledgeClient() {
     const term = search.trim().toLowerCase();
     return documents.filter((d) => {
       if ((view === "archived") !== (d.active === false)) return false;
+      if (publicOnly && !hasPublicTag(Array.isArray(d.tags) ? d.tags.map(String) : [])) return false;
       if (!term) return true;
       const tags = Array.isArray(d.tags) ? d.tags.join(" ") : "";
       return `${String(d.title ?? "")} ${tags} ${kindMeta(d.kind).label}`.toLowerCase().includes(term);
     });
-  }, [documents, view, search]);
+  }, [documents, view, search, publicOnly]);
 
   const addDocument = () => setEditor({ title: "", kind: "custom", content: "", tags: [], alwaysInclude: false });
   const addButton = (
@@ -208,6 +214,17 @@ export default function CrmKnowledgeClient() {
                     ))}
                   </SegmentedControl.List>
                 </SegmentedControl.Root>
+                <Button.Root
+                  variant="neutral"
+                  mode={publicOnly ? "lighter" : "stroke"}
+                  size="small"
+                  aria-pressed={publicOnly}
+                  title="Only documents marked public, which may be used in LinkedIn posts"
+                  onClick={() => setPublicOnly((on) => !on)}
+                >
+                  <Button.Icon as={RiGlobalLine} />
+                  Public
+                </Button.Root>
                 <Input.Root size="small" className="w-full sm:w-48">
                   <Input.Wrapper>
                     <Input.Icon as={RiSearchLine} />
@@ -255,6 +272,9 @@ export default function CrmKnowledgeClient() {
                             <p className={cn("min-w-0 truncate text-label-sm", archived ? "text-text-sub-600" : "text-text-strong-950")} title={title}>{title}</p>
                             {alwaysIncluded(document) && !archived && (
                               <Badge.Root size="small" variant="lighter" color="blue">Always included</Badge.Root>
+                            )}
+                            {hasPublicTag(tags) && !archived && (
+                              <Badge.Root size="small" variant="lighter" color="green">Public</Badge.Root>
                             )}
                             {archived && <Badge.Root size="small" variant="lighter" color="gray">Archived</Badge.Root>}
                           </div>
@@ -319,6 +339,10 @@ function KnowledgeEditor({
   const [content, setContent] = useState(String(document.content ?? ""));
   const [tags, setTags] = useState(Array.isArray(document.tags) ? document.tags.join(", ") : String(document.tags ?? ""));
   const [alwaysInclude, setAlwaysInclude] = useState(alwaysIncluded(document));
+  const tagList = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+  // The switch is the public tag itself: typing "public" in Tags turns it on too.
+  const isPublic = hasPublicTag(tagList);
+  const setPublic = (on: boolean) => setTags(withPublicTag(tagList, on).join(", "));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
@@ -404,6 +428,15 @@ function KnowledgeEditor({
               <span>
                 <span className="block text-label-sm text-text-strong-950">Always include in draft context</span>
                 <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">Sent with every draft the AI writes, so keep these short.</span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl p-3 ring-1 ring-inset ring-stroke-soft-200">
+              <Switch.Root className="mt-0.5" checked={isPublic} onCheckedChange={(checked) => setPublic(checked === true)} />
+              <span>
+                <span className="block text-label-sm text-text-strong-950">Public (may be used in posts)</span>
+                <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">
+                  LinkedIn posts may draw on it, and with Always include it is added to every post draft. Leave it off for pricing, client names or anything not cleared to share. Sets the “public” tag.
+                </span>
               </span>
             </label>
             {error && <Callout tone="error">{error}</Callout>}

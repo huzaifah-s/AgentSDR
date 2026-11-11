@@ -79,3 +79,16 @@ describe("parseAiInstructionsPatch callingInstructions", () => {
     assert.throws(() => parseAiInstructionsPatch({ callingInstructions: [{ id: "a", title: 1, content: "x" }] }), CrmConfigurationValidationError);
   });
 });
+
+describe("parseAiInstructionsPatch postInstructions", () => {
+  test("accepts the LinkedIn content brief, and null or an empty list as back to the defaults", () => {
+    const blocks = [{ id: "never-post", title: "What we never post", content: "Prices." }];
+    assert.deepEqual(parseAiInstructionsPatch({ postInstructions: blocks }).postInstructions, blocks);
+    assert.equal(parseAiInstructionsPatch({ postInstructions: null }).postInstructions, null);
+    assert.equal(parseAiInstructionsPatch({ postInstructions: [] }).postInstructions, null);
+    assert.equal(parseAiInstructionsPatch({ callingInstructions: null }).postInstructions, undefined);
+  });
+  test("refuses malformed blocks", () => {
+    assert.throws(() => parseAiInstructionsPatch({ postInstructions: [{ id: "a b", title: "x", content: "x" }] }), CrmConfigurationValidationError);
+  });
+});

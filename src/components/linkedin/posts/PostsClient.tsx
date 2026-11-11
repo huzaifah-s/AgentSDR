@@ -11,8 +11,9 @@ import { LinkedInAccountTag } from "@/components/linkedin/LinkedInAccountTag";
 import { EmptyState } from "@/components/page/EmptyState";
 import { PageHeader } from "@/components/page/PageHeader";
 import { PageTabs } from "@/components/page/PageTabs";
-import { firstLine, POST_TABS, type LinkedinPostStatus, type LinkedinPostView, type PostTab } from "@/lib/linkedin/posts/contract";
+import { firstLine, POST_TABS, type LinkedinPostAccount, type LinkedinPostStatus, type LinkedinPostView, type PostTab } from "@/lib/linkedin/posts/contract";
 import { cn } from "@/utils/cn";
+import { PostIdeasDialog } from "./PostIdeasDialog";
 import { formatInZone } from "./PostSchedulePanel";
 
 const EMPTY: Record<PostTab, { title: string; description: string }> = {
@@ -43,6 +44,8 @@ export function PostsClient({
   timeZone,
   page,
   pageSize,
+  aiReady = false,
+  accounts = [],
 }: {
   tab: PostTab;
   posts: LinkedinPostView[];
@@ -54,6 +57,10 @@ export function PostsClient({
   timeZone: string;
   page: number;
   pageSize: number;
+  /** OpenRouter is connected: the page offers "Suggest ideas" (Phase 5). */
+  aiReady?: boolean;
+  /** The accounts an idea may open as a draft on. */
+  accounts?: LinkedinPostAccount[];
 }) {
   const formatWhen = (iso: string) => formatInZone(iso, timeZone);
   const router = useRouter();
@@ -75,7 +82,12 @@ export function PostsClient({
       <PageHeader
         title="LinkedIn posts"
         description="Write posts and publish them from your organization's LinkedIn accounts, on each person's own profile."
-        actions={newPost}
+        actions={
+          <div className="flex items-center gap-2">
+            {aiReady && <PostIdeasDialog accounts={accounts} />}
+            {newPost}
+          </div>
+        }
       />
 
       {upcoming.length > 0 && (

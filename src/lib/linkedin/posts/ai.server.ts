@@ -2,26 +2,35 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { getOpenRouterRuntime } from "@/lib/ai/server/runtime";
+import { completeStructuredWithOpenRouter } from "@/lib/ai/server/structuredCompletion";
+import type { ResolvedPrompt } from "@/lib/observability/langfuse";
+import { resolveTemplates } from "@/lib/prompts/templates.server";
+import { formatAiInstructions } from "@/lib/crm/ai/instructions";
+import { loadPostInstructions } from "@/lib/crm/aiSettings";
 import { listKnowledgeDocuments } from "@/lib/crm/knowledge-service";
 import { db } from "@/lib/db";
 import { linkedInAccounts } from "@/lib/linkedin/schema";
 import { inOrg } from "@/lib/tenancy/scope";
 import {
   isAlwaysAddedKnowledge,
-  PUBLIC_KNOWLEDGE_TAG,
+  hasPublicTag,
   sortKnowledgeForPosts,
   type LinkedinPostSource,
   type PostDraftsResponse,
   type PostKnowledgeOption,
+  type PostIdeasResponse,
   type PostTheme,
   type PostThemesResponse,
 } from "./contract";
-import { generatePostDrafts, rewritePost, type PostDraftDependencies, type PostDraftResult, type PostKnowledgeDocument } from "./draft";
+import { generatePostDrafts, rewritePost, type PostCompletion, type PostDraftDependencies, type PostDraftResult, type PostKnowledgeDocument } from "./draft";
 import { describeLeaks, findLeaks, type LeakTerm } from "./leakGuard";
 import { findPostThemes, guardTermsFor, verifyTheme, type ThemeDependencies } from "./themes.server";
 import { PostApiError } from "./posts.server";
-import type { GenerateDraftsInput, RewriteDraftInput } from "./requests";
+import type { GenerateDraftsInput, PostIdeasInput, RewriteDraftInput } from "./requests";
+import { buildIdeasPrompt, IDEA_PROMPTS, toIdeas, validateIdeasOutput, type IdeaInput, type IdeaTemplates } from "./ideas";
+import { DEFAULT_POST_INSTRUCTIONS } from "./postInstructions";
 import { loadAuthorVoice as sharedVoiceLoader, type AuthorVoice, type VoiceAccount } from "./voice.server";
+import { voiceForDraft } from "./voices.server";
 
 /**
  * The AI half of the composer, in the organization in scope: which Knowledge
@@ -61,7 +70,7 @@ async function knowledgeRows(): Promise<KnowledgeRow[]> {
       title: document.title,
       kind: document.kind,
       alwaysInclude: document.alwaysInclude,
-      isPublic: document.tags.includes(PUBLIC_KNOWLEDGE_TAG),
+      isPublic: hasPublicTag(document.tags),
       content: document.latest?.content ?? "",
       chars: document.latest?.content?.trim().length ?? 0,
     })),
@@ -139,9 +148,27 @@ export type PostAiDependencies = PostDraftDependencies & {
   loadVoice?: (account: VoiceAccount) => Promise<AuthorVoice>;
   /** The leak guard's terms for a theme read at a time; the source set in the database by default. */
   guardTerms?: (readAt: Date) => Promise<LeakTerm[]>;
+  /** The content brief, rendered (Phase 5); the organization's, or the defaults, by default. */
+  loadBrief?: () => Promise<string | null>;
+  /** The account's own written voice (Phase 5); its linkedin_author_voices row by default. */
+  loadWrittenVoice?: (linkedinAccountId: string) => Promise<{ instructions: string | null; examplePosts: string[] } | null>;
   /** Skips the OpenRouter check, for a caller that injects `complete` (tests). */
   skipOpenRouterCheck?: boolean;
 };
+
+/** The organization's content brief as the prompt reads it: its own blocks, or the defaults while it has none. */
+export async function postBrief(): Promise<string | null> {
+  return formatAiInstructions((await loadPostInstructions()) ?? DEFAULT_POST_INSTRUCTIONS);
+}
+
+/** The brief and the account's written voice, the two layers above a draft's own notes. */
+async function layersFor(linkedinAccountId: string, dependencies: PostAiDependencies) {
+  const [brief, voice] = await Promise.all([
+    (dependencies.loadBrief ?? postBrief)(),
+    (dependencies.loadWrittenVoice ?? voiceForDraft)(linkedinAccountId),
+  ]);
+  return { brief, voice };
+}
 
 async function voiceFor(account: ResolvedPostSources["account"], dependencies: PostAiDependencies): Promise<AuthorVoice> {
   // A disconnected account cannot be read; the draft goes ahead without its past posts.
@@ -196,9 +223,11 @@ export async function draftPosts(input: GenerateDraftsInput, dependencies: PostA
   const sources = await resolvePostSources(input);
   if (!dependencies.skipOpenRouterCheck) await requireOpenRouter();
   const voice = await voiceFor(sources.account, dependencies);
+  const layers = await layersFor(sources.account.id, dependencies);
   const result = await guarded(() =>
     generatePostDrafts(
       {
+        ...layers,
         author: { name: voice.name, headline: voice.headline },
         pastPosts: voice.pastPosts,
         topic: input.topic,
@@ -218,9 +247,11 @@ export async function rewritePostDraft(input: RewriteDraftInput, dependencies: P
   const sources = await resolvePostSources(input);
   if (!dependencies.skipOpenRouterCheck) await requireOpenRouter();
   const voice = await voiceFor(sources.account, dependencies);
+  const layers = await layersFor(sources.account.id, dependencies);
   const result = await guarded(() =>
     rewritePost(
       {
+        ...layers,
         author: { name: voice.name, headline: voice.headline },
         pastPosts: voice.pastPosts,
         topic: input.topic,
@@ -246,4 +277,66 @@ export async function rewritePostDraft(input: RewriteDraftInput, dependencies: P
 export async function postThemes(dependencies: PostAiDependencies & ThemeDependencies = {}): Promise<PostThemesResponse> {
   if (!dependencies.skipOpenRouterCheck) await requireOpenRouter();
   return guarded(() => findPostThemes(dependencies));
+}
+
+// ------------------------------------------------------------ post ideas (Phase 5)
+
+export const completeIdeasWithOpenRouter: PostCompletion = (input) =>
+  completeStructuredWithOpenRouter({
+    timeoutMs: input.timeoutMs,
+    systemPrompt: input.systemPrompt,
+    userPrompt: input.userPrompt,
+    maxOutputTokens: input.maxOutputTokens,
+    jsonSchema: input.jsonSchema,
+    schemaName: "linkedin_post_ideas",
+    schemaDescription: input.toolDescription,
+    accept: input.accept,
+    signal: input.signal,
+    trace: input.trace,
+  });
+
+export type PostIdeasDependencies = PostAiDependencies &
+  ThemeDependencies & {
+    /** The ideas call; the themes call, when themes are read, is `complete`. */
+    completeIdeas?: PostCompletion;
+    resolveIdeas?: (names: readonly (typeof IDEA_PROMPTS)[number][]) => Promise<{ templates: IdeaTemplates; prompts: ResolvedPrompt[] }>;
+  };
+
+/**
+ * POST /ideas: 5 post ideas from the brief's pillars, the organization's
+ * public Knowledge and (unless turned off) prospects' themes, read first with
+ * their own call. An idea drawing on a theme is held to the leak guard like
+ * a draft, and opens as a draft with that theme's sealed source.
+ */
+export async function suggestPostIdeas(input: PostIdeasInput, dependencies: PostIdeasDependencies = {}): Promise<PostIdeasResponse> {
+  if (!dependencies.skipOpenRouterCheck) await requireOpenRouter();
+  return guarded(async () => {
+    const [brief, rows] = await Promise.all([(dependencies.loadBrief ?? postBrief)(), knowledgeRows()]);
+    const knowledge = rows.filter((row) => row.isPublic).map((row): PostKnowledgeDocument => ({ id: row.id, title: row.title, kind: row.kind, content: row.content }));
+    const themes = input.includeThemes ? (await findPostThemes(dependencies)).themes : [];
+    const ideaInput: IdeaInput = { brief, knowledge, themes };
+
+    const resolve = dependencies.resolveIdeas ?? ((names) => resolveTemplates(names));
+    const { templates, prompts } = await resolve(IDEA_PROMPTS);
+    const prompt = buildIdeasPrompt(ideaInput, templates);
+    const completion = await (dependencies.completeIdeas ?? completeIdeasWithOpenRouter)({
+      systemPrompt: prompt.systemPrompt,
+      userPrompt: prompt.userPrompt,
+      toolDescription: prompt.toolDescription,
+      jsonSchema: prompt.jsonSchema,
+      accept: (text) => {
+        validateIdeasOutput(text, prompt.refs);
+      },
+      timeoutMs: 90_000,
+      maxOutputTokens: 4_000,
+      trace: { name: "linkedin-post-ideas", prompts, metadata: { knowledge: knowledge.length, themes: themes.length } },
+    });
+    const ideas = toIdeas(validateIdeasOutput(completion.text, prompt.refs), ideaInput);
+
+    // The leak guard, as over drafts, on every idea once themes were read.
+    const readAt = themes[0]?.readAt;
+    const terms = readAt ? await (dependencies.guardTerms ?? guardTermsFor)(new Date(readAt)) : [];
+    const kept = ideas.filter((idea) => findLeaks(`${idea.title}\n${idea.angle}`, terms).length === 0);
+    return { ideas: kept, withheld: ideas.length - kept.length, themes: themes.length };
+  });
 }

@@ -28,7 +28,7 @@ import {
 } from "@/lib/crm/ai/instructions";
 import { cn } from "@/utils/cn";
 
-export type InstructionField = "draftInstructions" | "classificationInstructions" | "callingInstructions";
+export type InstructionField = "draftInstructions" | "classificationInstructions" | "callingInstructions" | "postInstructions";
 type Lists = Record<InstructionField, AiInstructionBlock[]>;
 
 /** A small ghost icon button; the label is its tooltip and its accessible name. */
@@ -268,12 +268,12 @@ export function InstructionSection({
     setError("");
     setSuccess(false);
     try {
-      const result = await crmFetch<Partial<Lists> & { callingInstructionsCustomized?: boolean }>("/settings/ai-instructions", {
+      const result = await crmFetch<Partial<Lists> & Partial<Record<`${InstructionField}Customized`, boolean>>>("/settings/ai-instructions", {
         method: "PUT",
         body: JSON.stringify({ pipelineId, [field]: blocks }),
       });
       const next = result[field] ?? [];
-      if (defaults) setCustomized(result.callingInstructionsCustomized ?? true);
+      if (defaults) setCustomized(result[`${field}Customized`] ?? true);
       setBlocks(next);
       setExpanded((current) => new Set([...current].filter((id) => next.some((b) => b.id === id))));
       onSaved(next);
@@ -437,5 +437,13 @@ export const INSTRUCTION_SECTIONS = {
     placeholder: "Never mention competitors by name. If they say they already use an agency, ask what the agency does for their landing pages.",
     emptyText: "No calling instructions — saving an empty list brings back the defaults.",
     exportName: "calling-instructions.json",
+  },
+  postInstructions: {
+    title: "LinkedIn posts",
+    helper:
+      "The content brief every LinkedIn post draft follows: who you write for, your content pillars, how you sound, what you never post and your call to action. Facts belong in Knowledge (only documents marked public reach posts). Each person's own voice is set on their LinkedIn account and comes after this; \"What we never post\" always wins.",
+    placeholder: "We write for heads of sales at 20–200 person B2B companies. Never name a client without their OK.",
+    emptyText: "No post instructions — saving an empty list brings back the defaults.",
+    exportName: "linkedin-post-instructions.json",
   },
 } as const satisfies Record<InstructionField, { title: string; helper: string; placeholder: string; emptyText: string; exportName: string }>;

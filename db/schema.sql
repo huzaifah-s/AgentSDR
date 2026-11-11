@@ -1841,6 +1841,8 @@ CREATE TABLE public.crm_settings (
     draft_instructions jsonb,
     classification_instructions jsonb,
     calling_instructions jsonb,
+    post_instructions jsonb,
+    CONSTRAINT crm_settings_post_instructions_shape_chk CHECK (((post_instructions IS NULL) OR ((jsonb_typeof(post_instructions) = 'array'::text) AND (length((post_instructions)::text) <= 60000)))),
     CONSTRAINT crm_settings_calling_instructions_shape_chk CHECK (((calling_instructions IS NULL) OR ((jsonb_typeof(calling_instructions) = 'array'::text) AND (length((calling_instructions)::text) <= 60000)))),
     CONSTRAINT crm_settings_confidence_chk CHECK (((auto_apply_confidence >= (0)::numeric) AND (auto_apply_confidence <= (1)::numeric))),
     CONSTRAINT crm_settings_human_send_only_chk CHECK ((human_send_only IS TRUE)),
@@ -2311,6 +2313,23 @@ CREATE TABLE public.invitations (
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     inviter_id uuid NOT NULL
+);
+
+--
+-- Name: linkedin_author_voices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.linkedin_author_voices (
+    organization_id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    linkedin_account_id text NOT NULL,
+    instructions jsonb,
+    example_posts jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_by text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT linkedin_author_voices_examples_chk CHECK (((jsonb_typeof(example_posts) = 'array'::text) AND (jsonb_array_length(example_posts) <= 5) AND (length((example_posts)::text) <= 40000))),
+    CONSTRAINT linkedin_author_voices_instructions_chk CHECK (((instructions IS NULL) OR ((jsonb_typeof(instructions) = 'array'::text) AND (length((instructions)::text) <= 60000))))
 );
 
 --
@@ -3486,6 +3505,22 @@ ALTER TABLE ONLY public.import_runs
 
 ALTER TABLE ONLY public.invitations
     ADD CONSTRAINT invitations_pkey PRIMARY KEY (id);
+
+--
+-- Name: linkedin_author_voices linkedin_author_voices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_author_voices
+    ADD CONSTRAINT linkedin_author_voices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: linkedin_author_voices linkedin_author_voices_org_account_uq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_author_voices
+    ADD CONSTRAINT linkedin_author_voices_org_account_uq UNIQUE (organization_id, linkedin_account_id);
+
 
 --
 -- Name: linkedin_posts linkedin_posts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -4665,6 +4700,13 @@ CREATE INDEX invitations_organization_id_idx ON public.invitations USING btree (
 --
 
 CREATE INDEX lead_person_idx ON public."Lead" USING btree ("personId");
+
+--
+-- Name: linkedin_author_voices_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX linkedin_author_voices_account_idx ON public.linkedin_author_voices USING btree (linkedin_account_id);
+
 
 --
 -- Name: linkedin_posts_account_idx; Type: INDEX; Schema: public; Owner: -
@@ -5987,6 +6029,22 @@ ALTER TABLE ONLY public.invitations
 
 ALTER TABLE ONLY public.invitations
     ADD CONSTRAINT invitations_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+
+--
+-- Name: linkedin_author_voices linkedin_author_voices_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_author_voices
+    ADD CONSTRAINT linkedin_author_voices_account_fk FOREIGN KEY (linkedin_account_id) REFERENCES public."LinkedInAccount"(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: linkedin_author_voices linkedin_author_voices_organization_id_organizations_id_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.linkedin_author_voices
+    ADD CONSTRAINT linkedin_author_voices_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
+
 
 --
 -- Name: linkedin_posts linkedin_posts_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -

@@ -71,12 +71,15 @@ function voiceNote(answer: PostDraftsResponse, authorName: string): string {
  * rewrite of the current text. Shown only when OpenRouter is connected.
  */
 export function PostAiPanel({ accountId, authorName, body, knowledge, currentSource, disabled, onUse }: Props) {
-  const [topic, setTopic] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
+  // A post opened from an idea, or written with AI before, starts from what it was written from.
+  const [topic, setTopic] = useState(() => currentSource?.topic ?? "");
+  const [picked, setPicked] = useState<string[]>(() =>
+    (currentSource?.knowledgeDocumentIds ?? []).filter((id) => knowledge.some((document) => document.id === id && !isAlwaysAddedKnowledge(document))),
+  );
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState<"draft" | "rewrite" | "themes" | null>(null);
   const [themes, setThemes] = useState<PostThemesResponse | null>(null);
-  const [theme, setTheme] = useState<PostTheme | null>(null);
+  const [theme, setTheme] = useState<PostTheme | null>(() => themeOfSource(currentSource));
   const [error, setError] = useState<string | null>(null);
   const [answer, setAnswer] = useState<{ kind: "draft" | "rewrite"; response: PostDraftsResponse } | null>(null);
 
@@ -208,7 +211,17 @@ export function PostAiPanel({ accountId, authorName, body, knowledge, currentSou
               {busy === "themes" ? "Reading…" : themes ? "Find again" : "Find themes"}
             </Button.Root>
           </div>
-          {!themes ? (
+          {!themes && theme ? (
+            <div className="rounded-xl bg-primary-alpha-10 px-3 py-2 ring-1 ring-inset ring-primary-base">
+              <span className="flex items-baseline justify-between gap-2">
+                <span className="text-label-sm text-text-strong-950">{theme.title}</span>
+                <button type="button" className="shrink-0 text-paragraph-xs text-text-sub-600 hover:text-text-strong-950" onClick={() => setTheme(null)} disabled={disabled}>
+                  Clear
+                </button>
+              </span>
+              <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">{theme.summary}</span>
+            </div>
+          ) : !themes ? (
             <p className="text-paragraph-xs text-text-sub-600">
               Objections, questions and pain points from the last {THEME_WINDOW_DAYS} days of replies and calls. A draft is written from the theme&apos;s summary only, never from the messages.
             </p>

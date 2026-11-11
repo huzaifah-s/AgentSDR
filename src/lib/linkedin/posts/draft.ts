@@ -57,6 +57,10 @@ export type PostPromptInput = {
    * messages it was found in.
    */
   theme?: { title: string; summary: string } | null;
+  /** The organization's content brief (Phase 5), rendered; null leaves it out. */
+  brief?: string | null;
+  /** The author's own writing voice (Phase 5): their blocks, rendered, and example posts. */
+  voice?: { instructions: string | null; examplePosts: readonly string[] } | null;
 };
 
 export type RewritePromptInput = PostPromptInput & { currentPost: string; instruction: string };
@@ -130,7 +134,9 @@ function baseContext(input: PostPromptInput, templates: PostTemplates) {
   const picked = new Set(input.knowledge.map((document) => document.id));
   // A picked document that is also always added is sent once, as picked.
   const companyContext = documents(input.companyContext.filter((document) => !picked.has(document.id)), "Company context");
-  const hashtags = pastPostsUseHashtags(pastPosts);
+  const voiceExamples = (input.voice?.examplePosts ?? []).map((post) => clean(post)).filter((post): post is string => Boolean(post));
+  // Hashtags are allowed when the author's own posts, or the examples they chose, use them.
+  const hashtags = pastPostsUseHashtags([...pastPosts, ...voiceExamples]);
 
   const snapshot: Record<string, unknown> = {
     author: { name: clean(input.author.name), headline: clean(input.author.headline) },
@@ -144,11 +150,19 @@ function baseContext(input: PostPromptInput, templates: PostTemplates) {
   const themeSummary = clean(input.theme?.summary);
   const theme = themeTitle && themeSummary ? { title: themeTitle, summary: themeSummary } : null;
   if (theme) snapshot.theme = theme;
+  // The layers (Phase 5): the brief, then the author's voice, then this post's notes.
+  const brief = clean(input.brief);
+  const authorVoice = clean(input.voice?.instructions);
+  if (voiceExamples.length) snapshot.voiceExamples = voiceExamples;
 
   const systemPrompt = fillPrompt(templates["linkedin/post-system"], {
     past_posts: pastPosts.length > 0,
     hashtags,
     theme: Boolean(theme),
+    postInstructions: brief,
+    authorVoice,
+    voice_examples: voiceExamples.length > 0,
+    layered: Boolean(brief || authorVoice || voiceExamples.length),
     max_length: MAX_POST_LENGTH.toLocaleString("en-US"),
   });
   return { snapshot, systemPrompt, topic, hasKnowledge: knowledge.length > 0, hasTheme: Boolean(theme), hashtags };

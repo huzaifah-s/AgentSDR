@@ -194,6 +194,17 @@ export const MAX_PICKED_KNOWLEDGE = 20;
  */
 export const PUBLIC_KNOWLEDGE_TAG = "public";
 
+/** Whether a tag list holds the public tag (any case, as a person may type it). */
+export function hasPublicTag(tags: readonly string[]): boolean {
+  return tags.some((tag) => tag.trim().toLowerCase() === PUBLIC_KNOWLEDGE_TAG);
+}
+
+/** The tags with the public tag set or taken off (the Knowledge editor's "Public" switch); other tags stay as they are. */
+export function withPublicTag(tags: readonly string[], on: boolean): string[] {
+  const rest = tags.map((tag) => tag.trim()).filter((tag) => tag && tag.toLowerCase() !== PUBLIC_KNOWLEDGE_TAG);
+  return on ? [...rest, PUBLIC_KNOWLEDGE_TAG] : rest;
+}
+
 /** Kinds listed first in the composer's Knowledge picker: what posts are most often made of. */
 export const POST_KNOWLEDGE_KINDS_FIRST: readonly string[] = ["case_study", "objection", "faq"];
 
@@ -308,4 +319,53 @@ export type PostThemesResponse = {
   read: number;
   /** Themes dropped because their summary named someone. */
   withheld: number;
+};
+
+// ------------------------------------------------------------ the content brief and voices (Phase 5)
+
+/** A person's writing voice, as the Writing voice dialog and the composer see it. */
+export type AuthorVoiceView = {
+  linkedinAccountId: string;
+  /** Titled blocks; empty when none are written. */
+  instructions: { id: string; title: string; content: string }[];
+  examplePosts: string[];
+  updatedBy: { id: string; name: string | null } | null;
+  updatedAt: string | null;
+};
+
+/** The composer's one line about the chosen account's voice; null when none is written. */
+export function voiceLine(voice: { instructions: { title: string; content: string }[]; examplePosts: string[] } | null | undefined): string | null {
+  if (!voice) return null;
+  const first = voice.instructions.find((block) => block.content.trim());
+  const examples = voice.examplePosts.filter((post) => post.trim()).length;
+  const text = first ? first.content.replace(/\s+/g, " ").trim() : "";
+  const line = text.length > 120 ? `${text.slice(0, 117).trimEnd()}…` : text;
+  const extra = examples ? `${examples} example post${examples === 1 ? "" : "s"}` : "";
+  if (!line && !extra) return null;
+  return [line, extra].filter(Boolean).join(" · ");
+}
+
+/** Posts "Learn from my posts" reads ("the last ~20"). */
+export const VOICE_LEARN_POSTS = 20;
+
+/** Ideas "Suggest ideas" proposes. */
+export const POST_IDEA_COUNT = 5;
+
+/** One idea, as /api/linkedin/posts/ideas answers it. Opening one creates a draft with this source. */
+export type PostIdea = {
+  title: string;
+  /** A sentence or two: the angle the post takes. */
+  angle: string;
+  /** The content pillar from the brief it belongs to, if any. */
+  pillar: string | null;
+  /** What to record on the draft it opens as: its topic, Knowledge and theme. */
+  source: LinkedinPostSource;
+};
+
+export type PostIdeasResponse = {
+  ideas: PostIdea[];
+  /** Ideas dropped because they named someone from the conversations. */
+  withheld: number;
+  /** Whether prospects' themes were read for them. */
+  themes: number;
 };

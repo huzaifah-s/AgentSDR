@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   RiErrorWarningLine,
   RiLinkedinBoxFill,
@@ -12,6 +12,7 @@ import {
   RiDashboard3Line,
   RiUserFollowLine,
   RiUserStarLine,
+  RiQuillPenLine,
 } from "@remixicon/react";
 import * as Avatar from "@/components/alignui/avatar";
 import * as Badge from "@/components/alignui/badge";
@@ -35,6 +36,7 @@ import {
 } from "@/components/settings/AccountsOverview";
 import { Callout, Field, Meter } from "@/components/settings/SettingsKit";
 import { AccountLimitDialog } from "@/components/settings/AccountLimitDialog";
+import { WritingVoiceDialog } from "@/components/linkedin/posts/WritingVoiceDialog";
 import { numberRule } from "@/lib/channels/rules";
 import { timeInputClass } from "@/components/outreach/WorkingHoursModal";
 import { ConnectAccountButton, useHostedAuthRedirect } from "@/components/linkedin/HostedAuth";
@@ -335,6 +337,7 @@ function AccountTableRow({
   limits,
   onEditHours,
   onEditLimit,
+  onEditVoice,
 }: {
   account: AccountRow;
   sentToday: number;
@@ -342,6 +345,7 @@ function AccountTableRow({
   limits: InviteLimits;
   onEditHours: () => void;
   onEditLimit: () => void;
+  onEditVoice: () => void;
 }) {
   const { redirecting, error, start } = useHostedAuthRedirect();
   const displayName = account.name || account.username;
@@ -433,6 +437,10 @@ function AccountTableRow({
                 <Dropdown.ItemIcon as={RiDashboard3Line} />
                 Daily request limit
               </Dropdown.Item>
+              <Dropdown.Item onSelect={onEditVoice}>
+                <Dropdown.ItemIcon as={RiQuillPenLine} />
+                Writing voice
+              </Dropdown.Item>
             </Dropdown.Content>
           </Dropdown.Root>
         </div>
@@ -448,6 +456,7 @@ function AccountsTable({
   limits,
   onEditHours,
   onEditLimit,
+  onEditVoice,
 }: {
   accounts: AccountRow[];
   sentTodayMap: Record<string, number>;
@@ -455,6 +464,7 @@ function AccountsTable({
   limits: InviteLimits;
   onEditHours: (account: AccountRow) => void;
   onEditLimit: (account: AccountRow) => void;
+  onEditVoice: (account: AccountRow) => void;
 }) {
   return (
     <Table.Root className="min-w-190 [&>table]:table-fixed">
@@ -478,6 +488,7 @@ function AccountsTable({
             limits={limits}
             onEditHours={() => onEditHours(account)}
             onEditLimit={() => onEditLimit(account)}
+            onEditVoice={() => onEditVoice(account)}
           />
         ))}
       </Table.Body>
@@ -499,7 +510,16 @@ export function AccountsClient({
   const [accounts, setAccounts] = useState(initialAccounts);
   const [editingAccount, setEditingAccount] = useState<AccountRow | null>(null);
   const [limitAccount, setLimitAccount] = useState<AccountRow | null>(null);
+  const [voiceAccount, setVoiceAccount] = useState<AccountRow | null>(null);
   const [search, setSearch] = useState("");
+
+  // The composer's "Edit" next to an account's voice links here with ?voice=<account id>.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("voice");
+    const account = id ? initialAccounts.find((a) => a.id === id) : null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from the URL after mount
+    if (account) setVoiceAccount(account);
+  }, [initialAccounts]);
   const [filter, setFilter] = useState<AccountFilter>("all");
 
   const connectedCount = accounts.filter(connected).length;
@@ -573,7 +593,7 @@ export function AccountsClient({
 
       <AccountsFrame
         title="Accounts"
-        description="Daily request limits, working hours and when each account next works."
+        description="Daily request limits, working hours, writing voices and when each account next works."
         filter={filter}
         onFilterChange={setFilter}
         counts={{ all: accounts.length, healthy: healthyCount, attention: accounts.length - healthyCount }}
@@ -584,7 +604,7 @@ export function AccountsClient({
         {filtered.length === 0 ? (
           <AccountsNoMatch noun="accounts" />
         ) : (
-          <AccountsTable accounts={filtered} sentTodayMap={sentTodayMap} pendingLeadsMap={pendingLeadsMap} limits={inviteLimits} onEditHours={setEditingAccount} onEditLimit={setLimitAccount} />
+          <AccountsTable accounts={filtered} sentTodayMap={sentTodayMap} pendingLeadsMap={pendingLeadsMap} limits={inviteLimits} onEditHours={setEditingAccount} onEditLimit={setLimitAccount} onEditVoice={setVoiceAccount} />
         )}
       </AccountsFrame>
 
@@ -596,6 +616,14 @@ export function AccountsClient({
           onSaved={(updated) => {
             setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
           }}
+        />
+      )}
+      {voiceAccount && (
+        <WritingVoiceDialog
+          key={voiceAccount.id}
+          accountId={voiceAccount.id}
+          accountLabel={voiceAccount.name || `@${voiceAccount.username}`}
+          onClose={() => setVoiceAccount(null)}
         />
       )}
       {limitAccount && (

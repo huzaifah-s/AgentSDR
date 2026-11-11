@@ -12,13 +12,17 @@ describe("LinkedIn post prompts", () => {
 
   test("each uses only the variables the code passes", () => {
     const passed: Record<keyof typeof LINKEDIN_PROMPTS, string[]> = {
-      "linkedin/post-system": ["hashtags", "max_length", "past_posts", "theme"],
+      "linkedin/post-system": ["authorVoice", "hashtags", "layered", "max_length", "past_posts", "postInstructions", "theme", "voice_examples"],
       "linkedin/post-user": ["context_json", "theme", "topic", "variants"],
       "linkedin/post-rewrite": ["context_json"],
       "linkedin/post-tool": [],
       "linkedin/post-themes": ["max_themes", "min_themes"],
       "linkedin/post-themes-user": ["count", "messages_json"],
       "linkedin/post-themes-tool": [],
+      "linkedin/post-ideas": ["count", "postInstructions"],
+      "linkedin/post-ideas-tool": [],
+      "linkedin/voice-summary": [],
+      "linkedin/voice-summary-tool": [],
     };
     for (const [name, definition] of Object.entries(LINKEDIN_PROMPTS)) {
       expect(promptVariableNames(definition.template)).toEqual(passed[name as keyof typeof LINKEDIN_PROMPTS].sort());

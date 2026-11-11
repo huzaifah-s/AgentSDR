@@ -1,8 +1,33 @@
 # LinkedIn posts: write, schedule and publish from AgentSDR
 
 Status: Phase 1 built (11 Nov 2026), not yet live: the migration has not
-run on the production database, and no real post has been published (see
-"Phase 1 as built"). Phases 2–5 planned.
+run on the production database, and no real post has been published. What
+was built and what changed from the plan: "Phase 1 as built", under Phase 1.
+Phases 2–5 planned.
+
+Waiting on (Phase 1):
+
+- [ ] **Live migration**: the user says yes, then someone runs
+      `bun run scripts/create-linkedin-post-tables.ts` with production's
+      `DATABASE_URL`. Until then the Posts pages fail in production
+      (`linkedin_posts` does not exist). Re-runnable; creates one table.
+- [ ] **A real publish**: the user picks a test LinkedIn account; publish
+      one text-only post and one with an image from the composer (Publish
+      now). Record whether Unipile returns `post_id` (and its shape) and the
+      post's real URL, then replace the provisional `postUrlFor` in
+      `src/lib/linkedin/posts/publishRules.ts` (and its test) to match.
+- [ ] **Images on real R2**: upload, preview, publish with an image, and
+      delete a draft with images, on an organization whose R2 integration
+      is real. Locally only the "R2 not connected" path ran (409, text
+      only); the R2 calls themselves are untested.
+- [ ] **Generic isolation run** (`scripts/e2e/tenancy-isolation.ts`, now
+      targeting the posts routes and pages): not completed. Against the dev
+      server it compiles every route on first hit and was stopped after
+      1 h 30 min, still in its write phase on `/api/grid/*`, before reaching
+      the posts routes, with no findings printed up to then. Let it run to
+      the end once (hours on the dev server; leave it overnight). Posts isolation
+      itself is covered by `scripts/e2e/linkedin-posts.ts` (46/46), where
+      the second organization has Unipile and an account of its own.
 
 Decided (11 Nov 2026): posts go out on the person's own profile only
 (decision 1a); any member may post from any of the organization's
@@ -190,14 +215,8 @@ count none of the first one's posts, and cannot post on its accounts.
 `check-organization-scope.ts --contract` passes; the generic
 `tenancy-isolation.ts` now targets the posts routes and pages with real ids.
 
-Still waiting on a person:
-
-1. Run `bun run scripts/create-linkedin-post-tables.ts` on the production
-   database.
-2. The real-account check above (one text post, one with an image, on a
-   test account someone picks), then fix `postUrlFor` to what Unipile
-   returns. Images were exercised only up to R2 being disconnected: an
-   upload to a real bucket and its publish are part of that check.
+What still waits on a person is the "Waiting on" list under Status, at
+the top of this file.
 
 ## Phase 2: AI drafts
 

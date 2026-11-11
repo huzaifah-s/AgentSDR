@@ -5,6 +5,16 @@
  * isolation (a second organization cannot list, open, edit, delete,
  * publish, upload to or count the first one's posts).
  *
+ * Phase 2, AI drafts: the generate and rewrite routes (409 without
+ * OpenRouter, 400 for another organization's account or Knowledge, both
+ * before anything is read from LinkedIn), and the drafting path itself run
+ * in this process with a fake completion — Knowledge read whole, only public
+ * always-include Knowledge added on its own, the author's past posts read
+ * through the mock Unipile and cached — and the AI draft's source and
+ * generation recorded when a post is saved. No model is ever called:
+ * organization A's OpenRouter is switched off for the route calls (restored
+ * at the end) and organization B never has one.
+ *
  *   MOCK_TLS_CERT=cert.pem MOCK_TLS_KEY=key.pem \
  *   INITIAL_OWNER_EMAIL=… INITIAL_OWNER_PASSWORD=… \
  *   BASE_URL=http://localhost:3100 bun run --conditions=react-server scripts/e2e/linkedin-posts.ts
@@ -21,8 +31,13 @@ import { readFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { createServer } from "node:https";
 import postgres from "postgres";
+import { createKnowledgeDocument } from "@/lib/crm/knowledge-service";
 import { encryptIntegrationCredentials } from "@/lib/integrations/credentials";
-import { UNCERTAIN_PUBLISH_ERROR } from "@/lib/linkedin/posts/contract";
+import { draftPosts, rewritePostDraft } from "@/lib/linkedin/posts/ai.server";
+import { UNCERTAIN_PUBLISH_ERROR, type PostDraftsResponse } from "@/lib/linkedin/posts/contract";
+import type { PostCompletion, PostCompletionInput } from "@/lib/linkedin/posts/draft";
+import { createVoiceLoader, readPastPostsFromUnipile } from "@/lib/linkedin/posts/voice.server";
+import { runInOrganization } from "@/lib/tenancy/scope";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
 const MOCK_PORT = Number(process.env.MOCK_PORT ?? 3199);
@@ -38,6 +53,10 @@ const sql = postgres(process.env.DATABASE_URL!, { ssl: false, max: 2, onnotice: 
 
 type MockCall = { accountId: string; text: string; attachments: number };
 const mockCalls: MockCall[] = [];
+/** Reads of an account's own profile and posts (the author's voice), by Unipile account id. */
+const voiceCalls: string[] = [];
+/** What the mock returns as an account's past posts; accounts not listed have none. */
+const pastPostsByAccount = new Map<string, { text: string; is_repost?: boolean }[]>();
 
 function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -51,6 +70,20 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 /** Behaviour is chosen by a marker in the post's text: [mock:400], [mock:500], [mock:drop], [mock:nullid]. */
 const mock = createServer({ cert: readFileSync(process.env.MOCK_TLS_CERT!), key: readFileSync(process.env.MOCK_TLS_KEY!) }, async (req, res) => {
   const raw = await readBody(req);
+  const url = new URL(req.url ?? "/", MOCK_BASE);
+  if (req.method === "GET" && req.headers["x-api-key"] === "mock-key") {
+    const accountId = url.searchParams.get("account_id") ?? "";
+    if (url.pathname === "/api/v1/users/me") {
+      voiceCalls.push(accountId);
+      return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ object: "AccountOwnerProfile", provider: "LINKEDIN", provider_id: `prov-${accountId}` }));
+    }
+    const posts = url.pathname.match(/^\/api\/v1\/users\/prov-([^/]+)\/posts$/);
+    if (posts && decodeURIComponent(posts[1]) === accountId) {
+      voiceCalls.push(accountId);
+      const items = (pastPostsByAccount.get(accountId) ?? []).map((item, index) => ({ object: "Post", id: `post-${index}`, is_repost: false, ...item }));
+      return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ object: "PostList", items, cursor: null }));
+    }
+  }
   if (req.method !== "POST" || req.url !== "/api/v1/posts" || req.headers["x-api-key"] !== "mock-key") {
     res.writeHead(404).end(JSON.stringify({ title: "Not found" }));
     return;
@@ -155,7 +188,8 @@ async function main() {
      where lower(u.email) = lower(${ownerEmail}) and m.role like '%owner%' order by o.created_at limit 1`;
   if (!orgA) throw new Error(`${ownerEmail} owns no organization`);
 
-  // A: Unipile → the mock, R2 off. Kept to restore afterwards.
+  // A: Unipile → the mock, R2 off, OpenRouter off for the AI routes. Kept to restore afterwards.
+  let savedByok: Record<string, unknown> | null = null;
   const [savedUnipile] = await sql<{ id: string; payload: string }[]>`
     select c.provider_id as id, c.encrypted_payload as payload from grid_provider_credentials c join grid_providers g on g.id = c.provider_id
      where g.organization_id = ${orgA.id} and g.key = 'platform-unipile'`;
@@ -264,6 +298,98 @@ async function main() {
     const pageA = await call(a, "GET", `/linkedin/posts/${firstId}`);
     check(pageA.status === 200 && pageA.text.includes("Hello from the e2e test"), "A opens its own post's page", pageA.status);
 
+    // ------------------------------------------------- Phase 2: AI drafts (A)
+    console.log("\nA: AI drafts");
+    const knowledge = await runInOrganization(orgA.id, async () => ({
+      publicAlways: await createKnowledgeDocument({ title: "E2E public company note", kind: "company", tags: ["public"], alwaysInclude: true, content: "E2E-PUBLIC-MARKER Northwind helps sales teams." }),
+      privateAlways: await createKnowledgeDocument({ title: "E2E private pricing", kind: "pricing", tags: [], alwaysInclude: true, content: "E2E-PRIVATE-MARKER Our floor price is 40% off." }),
+      caseStudy: await createKnowledgeDocument({ title: "E2E case study", kind: "case_study", tags: [], alwaysInclude: false, content: `Acme cut onboarding from 14 days to 3. ${"Detail. ".repeat(4_000)}E2E-END-OF-CASE` }),
+    }));
+    const caseId = knowledge.caseStudy.id;
+    const publicId = knowledge.publicAlways.id;
+    pastPostsByAccount.set(acc.linkedinId, [
+      { text: "We doubled reply rates by writing shorter emails. #sales" },
+      { text: "Someone else's post, reposted", is_repost: true },
+      { text: "Second own post." },
+    ]);
+
+    const [byok] = await sql<{ config: Record<string, unknown> }[]>`select config from grid_providers where organization_id = ${orgA.id} and key = 'openrouter-byok-settings'`;
+    savedByok = byok?.config ?? null;
+    if (savedByok?.byokOnlyConfirmed === true) {
+      // Rendering checks the settings and builds a client; it calls no model.
+      const ready = await call(a, "GET", "/linkedin/posts/new");
+      check(ready.text.includes("Write with AI") && ready.text.includes("E2E case study"), "with OpenRouter ready, the composer shows Write with AI and the Knowledge to pick", ready.status);
+    }
+    // From here on A has no usable OpenRouter: no route call can reach a model.
+    await sql`update grid_providers set config = jsonb_set(config, '{byokOnlyConfirmed}', 'false') where organization_id = ${orgA.id} and key = 'openrouter-byok-settings'`;
+    const notReady = await call(a, "GET", "/linkedin/posts/new");
+    check(notReady.status === 200 && !notReady.text.includes("Write with AI"), "without OpenRouter, the composer has no AI panel", notReady.status);
+
+    const voiceBefore = voiceCalls.length;
+    const gen409 = await call(a, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: acc.id, topic: "Shorter emails", knowledgeDocumentIds: [caseId] });
+    check(gen409.status === 409 && String(gen409.json.error).includes("OpenRouter"), "generate answers 409 when OpenRouter is not ready", gen409.json);
+    const rew409 = await call(a, "POST", "/api/linkedin/posts/rewrite", { linkedinAccountId: acc.id, body: "Some text", instruction: "shorter" });
+    check(rew409.status === 409 && String(rew409.json.error).includes("OpenRouter"), "rewrite answers 409 when OpenRouter is not ready", rew409.json);
+    check(voiceCalls.length === voiceBefore, "nothing is read from LinkedIn when OpenRouter is not ready", voiceCalls.length - voiceBefore);
+    const genEmpty = await call(a, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: acc.id, topic: " " });
+    check(genEmpty.status === 400, "generate needs a topic or a document", genEmpty.json);
+    const genUnknown = await call(a, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: acc.id, knowledgeDocumentIds: ["00000000-0000-4000-8000-000000000000"] });
+    check(genUnknown.status === 400, "generate refuses an unknown Knowledge document", genUnknown.json);
+
+    // The drafting path itself, in this process, with a fake completion.
+    const prompts: PostCompletionInput[] = [];
+    const fake = (bodies: string[]): PostCompletion => async (input) => {
+      prompts.push(input);
+      const text = JSON.stringify({ posts: bodies.map((body) => ({ body })) });
+      input.accept(text);
+      return { text, provider: "fake", model: "fake/e2e-model" };
+    };
+    const voices = createVoiceLoader({ read: readPastPostsFromUnipile });
+    const deps = (bodies: string[]) => ({ complete: fake(bodies), loadVoice: voices.loadAuthorVoice, skipOpenRouterCheck: true });
+    const voiceStart = voiceCalls.length;
+    const drafts: PostDraftsResponse = await runInOrganization(orgA.id, () =>
+      draftPosts({ linkedinAccountId: acc.id, topic: "Shorter emails", knowledgeDocumentIds: [caseId] }, deps(["Draft one #sales", "Draft two", "Draft three"])),
+    );
+    const sent = prompts.at(-1)!;
+    check(drafts.variants.length === 3 && drafts.variants[0].body === "Draft one #sales", "three drafts come back", drafts.variants);
+    check(sent.userPrompt.includes("E2E-END-OF-CASE") && sent.userPrompt.includes("Acme cut onboarding"), "a picked document is read whole, end included", sent.userPrompt.length);
+    check(sent.userPrompt.includes("E2E-PUBLIC-MARKER"), "always-include Knowledge tagged public is added");
+    check(!sent.userPrompt.includes("E2E-PRIVATE-MARKER"), "always-include Knowledge without the public tag is not added");
+    check(sent.userPrompt.includes("We doubled reply rates") && sent.userPrompt.includes("Second own post.") && !sent.userPrompt.includes("reposted"), "the author's own past posts, not reposts, come from Unipile", sent.userPrompt.slice(0, 400));
+    check(sent.systemPrompt.includes("at most 3 relevant ones"), "hashtags are allowed because the author's past posts use them");
+    check(sent.userPrompt.includes(acc.name), "the author's name is in the prompt");
+    check(voiceCalls.length - voiceStart === 2 && voiceCalls.slice(voiceStart).every((id) => id === acc.linkedinId), "the voice is read as the account (own profile, then its posts)", voiceCalls.slice(voiceStart));
+    check(JSON.stringify(drafts.source) === JSON.stringify({ kind: "knowledge", topic: "Shorter emails", knowledgeDocumentIds: [caseId, publicId] }), "the source names the topic and every document used", drafts.source);
+    check(drafts.generation.model === "fake/e2e-model" && drafts.generation.prompts.map((p) => p.name).join() === "linkedin/post-system,linkedin/post-user,linkedin/post-tool", "the generation names the model and prompts", drafts.generation);
+    check(drafts.voice.status === "read" && drafts.voice.pastPosts === 2, "the answer says the voice came from 2 past posts", drafts.voice);
+    check(sent.trace.name === "linkedin-post-draft", "traced as linkedin-post-draft");
+
+    await runInOrganization(orgA.id, () => draftPosts({ linkedinAccountId: acc.id, topic: "Again", knowledgeDocumentIds: [] }, deps(["A", "B", "C"])));
+    check(voiceCalls.length - voiceStart === 2, "a second draft within the hour reuses the cached voice", voiceCalls.length - voiceStart);
+
+    const noPosts = await runInOrganization(orgA.id, () => draftPosts({ linkedinAccountId: acc2.id, topic: "Hiring", knowledgeDocumentIds: [] }, deps(["A", "B", "C"])));
+    check(noPosts.voice.status === "none" && prompts.at(-1)!.systemPrompt.includes("There are no past posts by the author"), "an account without posts gets a plain first-person voice", noPosts.voice);
+    check(noPosts.source.kind === "topic", "a topic-only draft records kind topic", noPosts.source);
+
+    const rewrite = await runInOrganization(orgA.id, () =>
+      rewritePostDraft({ linkedinAccountId: acc.id, topic: null, knowledgeDocumentIds: [], body: "A long post about emails.", instruction: "shorter" }, deps(["Short post."])),
+    );
+    check(rewrite.variants.length === 1 && prompts.at(-1)!.trace.name === "linkedin-post-rewrite" && prompts.at(-1)!.userPrompt.includes("A long post about emails."), "a rewrite gives one variant of the current text", rewrite);
+    check(rewrite.generation.prompts.some((p) => p.name === "linkedin/post-rewrite"), "the rewrite's generation names linkedin/post-rewrite");
+
+    // Using a draft: saving records its source and generation.
+    const saved = await call(a, "POST", "/api/linkedin/posts", { linkedinAccountId: acc.id, body: drafts.variants[1].body, source: drafts.source, generation: drafts.generation });
+    const savedId = (saved.json.post as PostJson)?.id;
+    const [savedRow] = await sql<{ source: unknown; generation: unknown }[]>`select source, generation from linkedin_posts where id = ${savedId ?? null}`;
+    check(saved.status === 201 && JSON.stringify(savedRow?.source) === JSON.stringify(drafts.source) && JSON.stringify(savedRow?.generation) === JSON.stringify(drafts.generation), "a saved AI draft records its source and generation", savedRow);
+    const patched = await call(a, "PATCH", `/api/linkedin/posts/${savedId}`, { body: rewrite.variants[0].body, source: drafts.source, generation: rewrite.generation });
+    const [patchedRow] = await sql<{ generation: { prompts: { name: string }[] } }[]>`select generation from linkedin_posts where id = ${savedId ?? null}`;
+    check(patched.status === 200 && patchedRow.generation.prompts.some((p) => p.name === "linkedin/post-rewrite"), "using a rewrite records its generation", patchedRow);
+    const badSource = await call(a, "POST", "/api/linkedin/posts", { linkedinAccountId: acc.id, body: "x", source: { kind: "knowledge", knowledgeDocumentIds: ["00000000-0000-4000-8000-000000000000"] } });
+    check(badSource.status === 400, "a source naming an unknown Knowledge document is refused", badSource.json);
+    const conversations = await call(a, "POST", "/api/linkedin/posts", { linkedinAccountId: acc.id, body: "x", source: { kind: "conversations", themeSummary: "x" } });
+    check(conversations.status === 400, "a client cannot claim a conversations source (Phase 4 writes it)", conversations.json);
+
     // ------------------------------------------------------- organization B
     console.log("\nB: a second organization, Unipile connected, one account of its own");
     const stamp = Date.now();
@@ -329,6 +455,31 @@ async function main() {
     check(stealAccount.status === 400, "B cannot create a post on A's account", stealAccount.json);
     check((await sql`select 1 from linkedin_posts where linkedin_account_id = ${acc.id} and organization_id = ${orgB}`).length === 0, "no row was created for A's account in B");
 
+    // Phase 2: B cannot draft with A's account or A's Knowledge.
+    const voiceBeforeB = voiceCalls.length;
+    const bGenAccount = await call(b, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: acc.id, topic: "Posting as A" });
+    check(bGenAccount.status === 400 && !bGenAccount.text.includes(acc.name), "B cannot generate drafts with A's account", bGenAccount.json);
+    const bRewriteAccount = await call(b, "POST", "/api/linkedin/posts/rewrite", { linkedinAccountId: acc.id, body: "Text", instruction: "shorter" });
+    check(bRewriteAccount.status === 400, "B cannot rewrite with A's account", bRewriteAccount.json);
+    const bGenKnowledge = await call(b, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: accB.id, knowledgeDocumentIds: [caseId] });
+    check(bGenKnowledge.status === 400 && !bGenKnowledge.text.includes("E2E case study"), "B cannot generate from A's Knowledge", bGenKnowledge.json);
+    const bRewriteKnowledge = await call(b, "POST", "/api/linkedin/posts/rewrite", { linkedinAccountId: accB.id, body: "Text", instruction: "shorter", knowledgeDocumentIds: [caseId] });
+    check(bRewriteKnowledge.status === 400, "B cannot rewrite with A's Knowledge", bRewriteKnowledge.json);
+    const bGenOwn = await call(b, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: accB.id, topic: "Our own topic" });
+    check(bGenOwn.status === 409, "B's own account and topic get as far as the OpenRouter check (409: B has none)", bGenOwn.json);
+    check(voiceCalls.length === voiceBeforeB, "none of B's attempts read anyone's LinkedIn posts", voiceCalls.slice(voiceBeforeB));
+    const bSaveSource = await call(b, "POST", "/api/linkedin/posts", { linkedinAccountId: accB.id, body: "x", source: { kind: "knowledge", knowledgeDocumentIds: [caseId] } });
+    check(bSaveSource.status === 400, "B cannot save a post whose source names A's Knowledge", bSaveSource.json);
+
+    const promptsBeforeB = prompts.length;
+    const inB = (fn: () => Promise<unknown>) => runInOrganization(orgB, fn).then(() => 200, (error: { status?: number }) => error.status ?? 500);
+    check((await inB(() => draftPosts({ linkedinAccountId: acc.id, topic: "x", knowledgeDocumentIds: [] }, deps(["A", "B", "C"])))) === 400, "in B's scope, drafting with A's account is refused");
+    check((await inB(() => draftPosts({ linkedinAccountId: accB.id, topic: null, knowledgeDocumentIds: [caseId] }, deps(["A", "B", "C"])))) === 400, "in B's scope, drafting from A's Knowledge is refused");
+    check((await inB(() => rewritePostDraft({ linkedinAccountId: acc.id, topic: null, knowledgeDocumentIds: [], body: "x", instruction: "y" }, deps(["Z"])))) === 400, "in B's scope, rewriting with A's account is refused");
+    check(prompts.length === promptsBeforeB, "no completion ran for any refused draft");
+    await runInOrganization(orgB, () => draftPosts({ linkedinAccountId: accB.id, topic: "B's topic", knowledgeDocumentIds: [] }, deps(["A", "B", "C"])));
+    check(prompts.length === promptsBeforeB + 1 && !prompts.at(-1)!.userPrompt.includes("E2E-PUBLIC-MARKER"), "B's own draft runs, and carries none of A's Knowledge");
+
     // Positive control: B's own draft works and publishes through its own account.
     const own = await call(b, "POST", "/api/linkedin/posts", { linkedinAccountId: accB.id, body: "B's own post" });
     check(own.status === 201, "B creates a draft on its own account", own.json);
@@ -337,6 +488,7 @@ async function main() {
     const listA = await call(a, "GET", "/api/linkedin/posts?pageSize=100");
     check(!listA.text.includes((own.json.post as PostJson).id), "A's list does not show B's post");
   } finally {
+    if (savedByok) await sql`update grid_providers set config = ${sql.json(savedByok as never)} where organization_id = ${orgA.id} and key = 'openrouter-byok-settings'`;
     if (savedUnipile) await sql`update grid_provider_credentials set encrypted_payload = ${savedUnipile.payload} where provider_id = ${savedUnipile.id}`;
     if (savedR2) await sql`update grid_providers set enabled = ${savedR2.enabled} where organization_id = ${orgA.id} and key = 'platform-r2'`;
     mock.close();
@@ -349,6 +501,8 @@ async function main() {
     for (const f of failures) console.log(`  ✗ ${f}`);
     process.exit(1);
   }
+  // The app's own pool (imported for the in-process drafting checks) would keep the process alive.
+  process.exit(0);
 }
 
 main().catch((error) => {

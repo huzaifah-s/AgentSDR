@@ -3,7 +3,8 @@
 Status: Phase 1 built (11 Nov 2026), not yet live: the migration has not
 run on the production database, and no real post has been published. What
 was built and what changed from the plan: "Phase 1 as built", under Phase 1.
-Phases 2–5 planned.
+Phase 2 (AI drafts) built (12 Nov 2026), not yet verified end to end: see
+"Phase 2 as built". Phases 3–5 planned.
 
 Waiting on (Phase 1):
 
@@ -28,6 +29,28 @@ Waiting on (Phase 1):
       the end once (hours on the dev server; leave it overnight). Posts isolation
       itself is covered by `scripts/e2e/linkedin-posts.ts` (46/46), where
       the second organization has Unipile and an account of its own.
+
+Waiting on (Phase 2):
+
+- [ ] **Run the e2e**: `scripts/e2e/linkedin-posts.ts` is extended for
+      Phase 2 (409 without OpenRouter, isolation of accounts and Knowledge,
+      the drafting path in-process with a fake completion, source and
+      generation recorded) but has **not been run**. Run it on a disposable
+      database (needs `scripts/add-mailbox-smtp-imap.ts` applied after
+      `db:setup`: `db/schema.sql` lacks it, so `db:seed:demo` fails
+      without it). It switches organization A's OpenRouter off before any
+      AI route call and restores it after.
+- [ ] **A real generation**: with the user's yes, one generate and one
+      rewrite through a real organization's OpenRouter key; check the three
+      drafts keep to the rules and the trace lands in Langfuse.
+- [ ] **A real read of past posts**: with the user's yes, check
+      `users.getOwnProfile` returns `provider_id` and `users.getAllPosts`
+      returns the account's posts on a real account (only the mock was used).
+- [ ] **Prompts in existing organizations' Langfuse**: the four
+      `linkedin/post-*` prompts reach a project only when its Langfuse
+      integration is saved again, or by
+      `scripts/seed-langfuse-prompts.ts --org <id>` (with the user's yes).
+      Until then those organizations use the copies in code.
 
 Decided (11 Nov 2026): posts go out on the person's own profile only
 (decision 1a); any member may post from any of the organization's
@@ -256,6 +279,35 @@ the top of this file.
 - Code: `src/lib/linkedin/posts/draft.ts` (`buildPostPrompt`, pure, with
   tests; `generatePostDrafts`), `voice.server.ts`, route
   `POST /api/linkedin/posts/generate` and `POST /api/linkedin/posts/rewrite`.
+
+### Phase 2 as built (12 Nov 2026)
+
+- Code: prompts in `src/lib/prompts/linkedin.ts`; `draft.ts` (pure
+  `buildPostPrompt` / `buildRewritePrompt`, `generatePostDrafts` /
+  `rewritePost`, injectable completion and templates); `voice.server.ts`;
+  `ai.server.ts` (sources, the OpenRouter check, the two calls); routes
+  `generate` and `rewrite`; `PostAiPanel.tsx` in the composer.
+- **The model** is the organization's default OpenRouter model, as CRM
+  drafts use it. "Ready" is what `getOpenRouterRuntime` checks (connected,
+  BYOK-only confirmed, a default model). Errors in the call answer 502.
+- **The voice**: `users.getOwnProfile` gives the account's own
+  `provider_id`, then `users.getAllPosts`; reposts are left out. A failed
+  read is not cached and never stops a draft; a disconnected account is not
+  read. The answer says whether the voice came from past posts.
+- **Hashtags are enforced in `accept`** as well as the prompt: none unless
+  the author's past posts use them, at most 3. A rewrite keeps hashtags the
+  rep already wrote. A rewrite must differ from the current text, and three
+  drafts must differ from each other.
+- **Order of checks**: the account and Knowledge must be the organization's
+  own (400, the same answer as unknown) before the OpenRouter check (409),
+  and both before anything is read from LinkedIn.
+- **`source` and `generation` come back from the client** when the rep
+  saves a used draft. They are validated (shape, our prompt names, Knowledge
+  ids the organization's own); `conversations` is refused from a client, for
+  Phase 4 to write server-side. `source.knowledgeDocumentIds` lists every
+  document used, picked and always added. The post view now carries both.
+- Tests: `draft.test.ts`, `voice.server.test.ts`, `linkedin.test.ts`
+  (prompts), more in `requests.test.ts`.
 
 ## Phase 3: scheduling
 

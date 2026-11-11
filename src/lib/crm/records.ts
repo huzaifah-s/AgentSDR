@@ -160,6 +160,39 @@ export async function getOrCreateCrmRecordForCall(
   return result;
 }
 
+/**
+ * A person reached by hand from Leads — a one-off email, or an update the rep
+ * logged (src/lib/leads/manualTouch.ts) — enters the pipeline at that first
+ * touch, as a called person does at their first call. Such a record has no
+ * inbound message, so it takes what a call-only record takes: a stage and a
+ * follow-up date, not inbound-only operations.
+ */
+export async function getOrCreateCrmRecordForManualActivity(
+  tx: CrmTransaction,
+  input: {
+    personId: string;
+    pipelineId?: string;
+    cause: "first_manual_touch";
+    actorType: CrmEventActor;
+    actorRef?: string | null;
+  },
+): Promise<{ record: CrmRecord; created: boolean }> {
+  const result = await upsertCrmRecord(tx, input.personId, input.pipelineId);
+  if (result.created) {
+    await appendCrmEvent(tx, {
+      personId: result.record.personId,
+      crmRecordId: result.record.id,
+      pipelineId: result.record.pipelineId,
+      eventType: "record.created",
+      actorType: input.actorType,
+      actorRef: input.actorRef,
+      toData: { cause: input.cause },
+      contextVersion: result.record.contextVersion,
+    });
+  }
+  return result;
+}
+
 async function upsertCrmRecord(
   tx: CrmTransaction,
   personId: string,

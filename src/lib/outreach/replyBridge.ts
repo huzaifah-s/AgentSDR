@@ -365,9 +365,13 @@ export async function ingestGmailReply(
   // looped in, a reply-all, or another emailed lead at the same company all
   // belong on the lead's existing thread. (A second lead's own conversation
   // would also collide with this thread id and be refused by the CRM.)
+  // A thread the CRM already holds for this very sender (an email sent to one
+  // person from Leads, outside any campaign) makes them a known recipient too.
+  let ownThreadConversation = false;
   if (msg.threadId) {
     const conversation = await (options.findThreadConversation ?? findThreadConversationInDb)(mailboxAddress, msg.threadId);
-    if (conversation && conversation.personEmail?.toLowerCase() !== msg.fromEmail.toLowerCase()) {
+    ownThreadConversation = Boolean(conversation && conversation.personEmail?.toLowerCase() === msg.fromEmail.toLowerCase());
+    if (conversation && !ownThreadConversation) {
       return attachToThreadConversation(
         mailboxAddress,
         msg as InboundMessage & { fromEmail: string },
@@ -381,7 +385,7 @@ export async function ingestGmailReply(
     }
   }
 
-  if (!knownOutreachRecipient) {
+  if (!knownOutreachRecipient && !ownThreadConversation) {
     const inbox = await (options.storeInMasterInbox ?? storeGmailMessageInMasterInbox)(
       mailboxAddress,
       msg as InboundMessage & { fromEmail: string },

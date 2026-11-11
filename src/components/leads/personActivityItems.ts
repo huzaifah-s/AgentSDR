@@ -2,6 +2,7 @@ import { CALL_STATUS_LABEL } from "@/components/calls/callStatus";
 import { formatCallDuration } from "@/components/calls/formatElapsed";
 import { CALL_DISPOSITION_DEFINITIONS, type CallSummary } from "@/lib/calls/contract";
 import type { PersonActivityEvent } from "@/lib/leads/personActivity";
+import { LOGGED_KIND_LABELS } from "./loggedKinds";
 
 /** One line of the person drawer's Activity list. */
 export type PersonActivityItem = {
@@ -42,7 +43,25 @@ function callItem(call: CallSummary): PersonActivityItem {
   };
 }
 
+function loggedItem(event: PersonActivityEvent): PersonActivityItem {
+  const meta = event.meta ?? {};
+  const kind = text(meta.kind);
+  const followUpAt = text(meta.followUpAt);
+  return {
+    id: `event:${event.id}`,
+    kind: "event",
+    at: text(meta.occurredAt) ?? event.createdAt,
+    title: `${(kind && LOGGED_KIND_LABELS[kind]) ?? "Update"} · ${meta.direction === "inbound" ? "They replied" : "We reached out"}`,
+    detail: [text(meta.summary), followUpAt && `Next follow-up: ${new Date(followUpAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}`].filter(Boolean).join("\n") || null,
+    failed: false,
+  };
+}
+
+/** The CRM's own audit copy of an email sent from Leads; its `manual_email.sent` event already shows it. */
+const isLeadsEmailEcho = (event: PersonActivityEvent) => event.eventType === "message.recorded" && event.meta?.source === "leads";
+
 function eventItem(event: PersonActivityEvent): PersonActivityItem {
+  if (event.eventType === "activity.logged") return loggedItem(event);
   const meta = event.meta ?? {};
   return {
     id: `event:${event.id}`,
@@ -58,6 +77,6 @@ function eventItem(event: PersonActivityEvent): PersonActivityItem {
 
 /** Calls and CRM events in one list, newest first. Pure, for the tests. */
 export function personActivityItems(calls: CallSummary[], events: PersonActivityEvent[]): PersonActivityItem[] {
-  return [...calls.map(callItem), ...events.map(eventItem)]
+  return [...calls.map(callItem), ...events.filter((event) => !isLeadsEmailEcho(event)).map(eventItem)]
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 }

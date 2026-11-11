@@ -29,6 +29,26 @@ describe("personActivityItems", () => {
     expect(item.detail).toBe("Met at the event");
   });
 
+  test("a logged update reads its kind, direction, summary and follow-up", () => {
+    const [item] = personActivityItems([], [event({
+      eventType: "activity.logged",
+      meta: { kind: "whatsapp", direction: "inbound", summary: "Interested", occurredAt: "2026-11-01T09:00:00.000Z", followUpAt: "2026-11-13T10:00:00.000Z" },
+    })]);
+    expect(item.title).toBe("WhatsApp (my phone) · They replied");
+    expect(item.detail).toStartWith("Interested\nNext follow-up: Nov 13, 2026");
+    expect(item.at).toBe("2026-11-01T09:00:00.000Z");
+  });
+
+  test("an email sent from Leads shows once: its CRM audit copy is left out", () => {
+    const items = personActivityItems([], [
+      event({ id: "sent", eventType: "manual_email.sent", meta: { subject: "Hello", from: "rep@example.test" } }),
+      event({ id: "echo", eventType: "message.recorded", meta: { source: "leads" } }),
+      event({ id: "phone", eventType: "message.recorded", meta: { origin: "phone" } }),
+    ]);
+    expect(items.map((item) => item.id)).toEqual(["event:sent", "event:phone"]);
+    expect(items[0].detail).toBe("“Hello” from rep@example.test");
+  });
+
   test("a call reads its status, length and outcome; an AI call says so", () => {
     const [item] = personActivityItems([call({ mode: "agent_cloud", durationMs: 65_000, disposition: "no_answer" })], []);
     expect(item.title).toBe("AI agent call · Recorded");

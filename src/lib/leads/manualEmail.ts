@@ -1,11 +1,12 @@
-import { and, desc, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { pickInRange } from "@/lib/channels/rules";
 import { channelRules } from "@/lib/channels/rules.server";
 import { appendCrmEvent } from "@/lib/crm/events";
 import { isEmailDoNotContact, isPersonDoNotContact } from "@/lib/crm/policies";
 import { withCrmTransaction } from "@/lib/crm/repository";
-import { crmRecords } from "@/lib/crm/schema";
+import { crmConversationMessages } from "@/lib/crm/schema";
+import { recordManualOutboundInTransaction } from "@/lib/crm/manualOutbound";
 import { sendEmail } from "@/lib/outreach/gmail";
 import { toHtmlBody } from "@/lib/outreach/render";
 import { mailboxes } from "@/lib/outreach/schema";
@@ -13,6 +14,7 @@ import { isSuppressed } from "@/lib/outreach/suppression";
 import { isSameLocalDay } from "@/lib/outreach/workingHours";
 import { requirePlatformCredentials } from "@/lib/platform/credentials";
 import { inOrg } from "@/lib/tenancy/scope";
+import { lockOrCreateManualRecord } from "./manualTouch";
 import { people } from "./schema";
 
 /**
@@ -25,6 +27,10 @@ import { people } from "./schema";
  * its sending gap (the same counter and turn the campaign scheduler and the
  * automatic CRM follow-ups use). Sending hours are not applied: those pace
  * automated sending, and a person is pressing Send.
+ *
+ * Once Gmail has it, the email is the person's first manual touch (or a
+ * later one): it goes on their CRM record's email conversation, keyed by the
+ * Gmail thread, so a reply lands beside it and later CRM replies thread.
  */
 
 export const MANUAL_EMAIL_EVENT = "manual_email.sent";
@@ -169,33 +175,15 @@ export async function sendManualEmail(input: ManualEmailInput): Promise<ManualEm
     .where(and(inOrg(mailboxes), eq(mailboxes.id, mailbox.id)))
     .catch((error) => console.error("[leads/manualEmail] could not count the send against the mailbox:", error));
 
-  const event = await withCrmTransaction(async (tx) => {
-    const [record] = await tx.select({ id: crmRecords.id, pipelineId: crmRecords.pipelineId }).from(crmRecords)
-      .where(and(inOrg(crmRecords), eq(crmRecords.personId, person.id)))
-      .orderBy(desc(crmRecords.updatedAt))
-      .limit(1);
-    return appendCrmEvent(tx, {
-      personId: person.id,
-      crmRecordId: record?.id ?? null,
-      pipelineId: record?.pipelineId ?? null,
-      eventType: MANUAL_EMAIL_EVENT,
-      actorType: "human",
-      actorRef: input.actorRef,
-      meta: {
-        from: mailbox.emailAddress,
-        to,
-        subject,
-        body,
-        gmailMessageId: sent.id,
-        threadId: sent.threadId,
-        rfcMessageId: sent.messageId,
-        occurredAt: sentAt.toISOString(),
-      },
-      createdAt: sentAt,
-    });
-  }).catch((error) => {
-    console.error("[leads/manualEmail] email sent but its event was not recorded:", error);
-    return null;
+  const event = await recordSentManualEmail({
+    personId: person.id,
+    mailbox: { emailAddress: mailbox.emailAddress, displayName: mailbox.displayName },
+    to,
+    subject,
+    body,
+    sent,
+    sentAt,
+    actorRef: input.actorRef,
   });
 
   return {
@@ -206,4 +194,84 @@ export async function sendManualEmail(input: ManualEmailInput): Promise<ManualEm
     gmailMessageId: sent.id,
     threadId: sent.threadId,
   };
+}
+
+/**
+ * What a sent one-off email leaves behind: the person's CRM record (created at
+ * this first touch when they have none), the email as an outbound message on
+ * the record's email conversation keyed by the Gmail thread — where the reply
+ * bridge puts the person's reply, as for a campaign email — and a
+ * `manual_email.sent` event. Never throws: if the CRM write fails, the event
+ * alone is kept, and if that fails too, null (both logged).
+ */
+export async function recordSentManualEmail(input: {
+  personId: string;
+  mailbox: { emailAddress: string; displayName: string | null };
+  to: string;
+  subject: string;
+  body: string;
+  sent: { id: string | null; messageId: string | null; threadId: string | null };
+  sentAt: Date;
+  actorRef: string | null;
+}): Promise<{ id: string } | null> {
+  const meta = {
+    from: input.mailbox.emailAddress,
+    to: input.to,
+    subject: input.subject,
+    body: input.body,
+    gmailMessageId: input.sent.id,
+    threadId: input.sent.threadId,
+    rfcMessageId: input.sent.messageId,
+    occurredAt: input.sentAt.toISOString(),
+  };
+  const actor = { actorType: "human" as const, actorRef: input.actorRef };
+  return withCrmTransaction(async (tx) => {
+    // The first manual touch gives the person a CRM record, and the email
+    // goes on its email conversation keyed by the Gmail thread — where the
+    // reply bridge puts the person's reply, as it does for a campaign email.
+    const { record } = await lockOrCreateManualRecord(tx, input.personId, actor);
+    const { message } = await recordManualOutboundInTransaction(tx, {
+      recordId: record.id,
+      personId: input.personId,
+      channel: "email",
+      accountRef: input.mailbox.emailAddress,
+      providerThreadId: input.sent.threadId,
+      providerContactId: input.to,
+      idempotencyKey: `leads-email:${input.sent.id ?? `${input.mailbox.emailAddress}:${input.to}:${input.sentAt.toISOString()}`}`,
+      providerMessageId: input.sent.messageId ?? input.sent.id,
+      bodyText: input.body,
+      raw: {
+        messageId: input.sent.messageId,
+        threadId: input.sent.threadId,
+        gmailMessageId: input.sent.id,
+        from: { email: input.mailbox.emailAddress, name: input.mailbox.displayName },
+        to: [{ email: input.to, name: null }],
+        subject: input.subject,
+      },
+      sentAt: input.sentAt,
+      reason: "manual_outbound_email",
+      ...actor,
+      meta: { source: "leads" },
+    });
+    // recordManualOutbound keeps no subject; an email has one.
+    await tx.update(crmConversationMessages).set({ subject: input.subject }).where(eq(crmConversationMessages.id, message.id));
+    return appendCrmEvent(tx, {
+      personId: input.personId,
+      crmRecordId: record.id,
+      pipelineId: record.pipelineId,
+      eventType: MANUAL_EMAIL_EVENT,
+      ...actor,
+      meta: { ...meta, messageId: message.id },
+      contextVersion: record.contextVersion,
+      createdAt: input.sentAt,
+    });
+  }).catch(async (error) => {
+    // Keep at least the fact of the send on the person.
+    console.error("[leads/manualEmail] email sent but the CRM record was not updated:", error);
+    return withCrmTransaction((tx) => appendCrmEvent(tx, { personId: input.personId, eventType: MANUAL_EMAIL_EVENT, ...actor, meta, createdAt: input.sentAt }))
+      .catch((fallbackError) => {
+        console.error("[leads/manualEmail] email sent but its event was not recorded either:", fallbackError);
+        return null;
+      });
+  });
 }

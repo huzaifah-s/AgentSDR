@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { RiBuilding2Line, RiCheckboxCircleLine, RiEditLine, RiErrorWarningLine, RiExternalLinkLine, RiHistoryLine, RiLinkedinBoxLine, RiMailLine, RiMailSendLine, RiPhoneLine, RiUserSearchLine } from "@remixicon/react";
+import { RiBuilding2Line, RiCheckboxCircleLine, RiEditLine, RiErrorWarningLine, RiExternalLinkLine, RiHistoryLine, RiLinkedinBoxLine, RiMailLine, RiMailSendLine, RiStickyNoteAddLine, RiPhoneLine, RiUserSearchLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Modal from "@/components/alignui/modal";
 import { CallButton } from "@/components/calls/CallButton";
@@ -11,6 +11,7 @@ import { errorMessage, formatDate } from "@/components/crm/crm-utils";
 import { Skeleton } from "@/components/page/Skeletons";
 import { PersonWhatsappPanel } from "@/components/whatsapp/PersonWhatsappPanel";
 import { PersonEmailComposer } from "./PersonEmailComposer";
+import { LogUpdateForm, type LogUpdateResult } from "./LogUpdateForm";
 import { listCalls } from "@/lib/calls/client";
 import type { PersonActivityEvent } from "@/lib/leads/personActivity";
 import { cn } from "@/utils/cn";
@@ -106,6 +107,15 @@ export function PersonDrawer({ row, onClose, onEdit, onChanged }: {
 
   const changed = () => { void reload(); onChanged?.(); };
   const [composing, setComposing] = useState(false);
+  const [logging, setLogging] = useState(false);
+  const logged = (result: LogUpdateResult) => {
+    setLogging(false);
+    const followUp = result.followUp
+      ? result.followUp.scheduled ? ` Follow-up set for ${formatDate(result.followUp.at)}.` : ` ${result.followUp.reason}`
+      : "";
+    setNotice(`Update logged${result.recordCreated ? " and added to the CRM" : ""}.${followUp}`);
+    changed();
+  };
   const [notice, setNotice] = useState("");
 
   return (
@@ -155,18 +165,22 @@ export function PersonDrawer({ row, onClose, onEdit, onChanged }: {
                 size="xsmall"
                 disabled={!person.email || composing}
                 title={person.email ? undefined : "Add an email address with Edit to send email"}
-                onClick={() => { setComposing(true); setNotice(""); }}
+                onClick={() => { setComposing(true); setLogging(false); setNotice(""); }}
               >
                 <Button.Icon as={RiMailSendLine} />Send email
               </Button.Root>
+              <Button.Root variant="neutral" mode="stroke" size="xsmall" disabled={logging} onClick={() => { setLogging(true); setComposing(false); setNotice(""); }}>
+                <Button.Icon as={RiStickyNoteAddLine} />Log an update
+              </Button.Root>
             </div>
             {notice && <p role="status" className="text-paragraph-xs text-success-base">{notice}</p>}
+            {logging && <LogUpdateForm personId={person.id} onLogged={logged} onCancel={() => setLogging(false)} />}
             {composing && person.email && (
               <PersonEmailComposer
                 personId={person.id}
                 to={person.email}
                 onCancel={() => setComposing(false)}
-                onSent={(from) => { setComposing(false); setNotice(from ? `Sent from ${from}.` : "Sent."); changed(); }}
+                onSent={(from) => { setComposing(false); setNotice(`${from ? `Sent from ${from}` : "Sent"}. It is on their CRM record, where a reply will land.`); changed(); }}
               />
             )}
           </Section>

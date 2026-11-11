@@ -41,6 +41,7 @@ import { EmptyState } from "@/components/page/EmptyState";
 import { PageHeader } from "@/components/page/PageHeader";
 import { StatRow } from "@/components/page/StatRow";
 import { PersonWhatsappPanel } from "@/components/whatsapp/PersonWhatsappPanel";
+import { LogUpdateButton } from "@/components/leads/LogUpdateButton";
 import { WhatsappLogo } from "@/components/whatsapp/WhatsappLogo";
 import { cn } from "@/utils/cn";
 import {
@@ -101,6 +102,8 @@ const eventLabels: Record<string, string> = {
   "record.closed": "Record closed",
   "record.reopened": "Record reopened",
   "stage.moved": "Stage moved",
+  "activity.logged": "Update logged",
+  "manual_email.sent": "Email sent from Leads",
 };
 
 function text(value: unknown, fallback = ""): string {
@@ -253,7 +256,7 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
             lastMessage={lastMessage}
             onAction={mutate}
             stage={<ClassificationSelect record={data} categories={categories} onAction={mutate} />}
-            activity={<ActivityDrawer events={events} drafts={drafts} sendAttempts={sendAttempts} />}
+            activity={<div className="flex items-center gap-1"><LogUpdateButton personId={String(person.id ?? data.personId)} onLogged={() => { announceRecordChanged(recordId); void load(); }} /><ActivityDrawer events={events} drafts={drafts} sendAttempts={sendAttempts} /></div>}
             stageNotice={<ProposedClassificationNotice record={data} categories={categories} onAction={mutate} />}
           />
         </div>
@@ -821,7 +824,7 @@ function EventRow({ event }: { event: Data }) {
   const destination = text(to.workflowState ?? to.status ?? to.categoryKey);
   const detail = transition && destination && transition !== destination
     ? `${humanize(transition)} → ${humanize(destination)}`
-    : text(meta.reason ?? meta.error ?? to.reason ?? event.error);
+    : text(meta.summary ?? meta.subject ?? meta.reason ?? meta.error ?? to.reason ?? event.error);
   const failed = type.includes("failed") || type.includes("error") || type.includes("uncertain");
   return <div className="grid gap-3 px-5 py-4 sm:grid-cols-[36px_minmax(0,1fr)_auto] sm:items-center"><span className={cn("flex size-9 items-center justify-center rounded-full", failed ? "bg-error-lighter text-error-base" : "bg-bg-weak-50 text-text-soft-400")}><RiCheckboxCircleLine className="size-4" aria-hidden="true" /></span><div className="min-w-0"><p className="text-label-sm text-text-strong-950">{eventLabels[type] ?? humanize(type)}</p><p className="mt-0.5 truncate text-paragraph-xs text-text-sub-600">{detail || `${humanize(event.actorType)}${event.actorRef ? ` · ${String(event.actorRef)}` : ""}`}</p></div><div className="text-left sm:text-right"><time className="text-paragraph-xs text-text-soft-400">{formatDate(event.createdAt)}</time><p className="mt-0.5 text-subheading-2xs uppercase tracking-wider text-text-soft-400">{humanize(event.actorType)}</p></div></div>;
 }

@@ -19,7 +19,9 @@ import {
   type PostTime,
   NEARBY_POST_WARNING_MS,
 } from "./contract";
+import { conversationsLeakMessage } from "./leakCheck.server";
 import { failStalePublishingPosts, publishedTodayByAccount } from "./publish";
+import { verifyTheme } from "./themes.server";
 import type { CreatePostInput, ImageUpload, ListQuery, PostOrigin, SchedulePostInput, UpdatePostInput } from "./requests";
 import { nextOrganizationDayStart, scheduledWaitReason, scheduleInstant, scheduleRefusal } from "./scheduleRules";
 import { linkedinPosts, type LinkedinPostRow } from "./schema";
@@ -228,8 +230,19 @@ async function assertAccountInOrg(linkedinAccountId: string): Promise<void> {
   if (!account) throw new PostApiError(400, "Choose one of your organization's LinkedIn accounts");
 }
 
-/** An AI draft's source may only name the organization's own Knowledge. */
+/**
+ * An AI draft's source may only name the organization's own Knowledge, and a
+ * `conversations` source must carry this organization's seal over its theme:
+ * the server wrote it (/generate or /rewrite), the browser only hands it back.
+ */
 async function assertOriginInOrg(origin: PostOrigin | undefined): Promise<void> {
+  const source = origin?.source;
+  if (source?.kind === "conversations") {
+    const sealed =
+      source.themeTitle && source.themeSummary && source.themesReadAt && source.seal &&
+      verifyTheme({ title: source.themeTitle, summary: source.themeSummary, readAt: source.themesReadAt, seal: source.seal });
+    if (!sealed) throw new PostApiError(400, "The post's theme is not one AgentSDR found for your organization. Find themes again.");
+  }
   const ids = origin?.source.knowledgeDocumentIds ?? [];
   if (!ids.length) return;
   const found = await db
@@ -272,12 +285,17 @@ export async function updatePost(postId: string, input: UpdatePostInput): Promis
   await assertOriginInOrg(input.origin);
   const updated = await db.transaction(async (tx) => {
     const [post] = await tx
-      .select({ status: linkedinPosts.status })
+      .select({ status: linkedinPosts.status, source: linkedinPosts.source })
       .from(linkedinPosts)
       .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)))
       .for("update");
     if (!post) throw notFound();
     if (!EDITABLE_STATUSES.includes(post.status)) throw editableError(post.status);
+    // Written from prospects' themes stays so: the text may still carry what
+    // the theme drafts said, so the leak guard keeps running at publish even
+    // after a later draft from a topic or Knowledge.
+    const source =
+      input.origin && post.source?.kind === "conversations" && input.origin.source.kind !== "conversations" ? post.source : input.origin?.source;
     // Editing keeps a scheduled post scheduled, so it must stay publishable.
     if (post.status === "scheduled" && input.body !== undefined && !input.body.trim()) {
       throw new PostApiError(400, "A scheduled post needs text. Unschedule it to keep it as an empty draft.");
@@ -288,7 +306,7 @@ export async function updatePost(postId: string, input: UpdatePostInput): Promis
       .set({
         ...(input.body !== undefined ? { body: input.body } : {}),
         ...(input.linkedinAccountId ? { linkedinAccountId: input.linkedinAccountId } : {}),
-        ...(input.origin ? { source: input.origin.source, generation: input.origin.generation } : {}),
+        ...(input.origin ? { source, generation: input.origin.generation } : {}),
         status: nextStatus,
         ...(post.status === "failed" ? { error: null, publishedBy: null } : {}),
         updatedAt: new Date(),
@@ -311,13 +329,16 @@ export async function schedulePost(postId: string, input: SchedulePostInput, now
   if (!scheduledAt) throw new PostApiError(400, "That date does not exist.");
   await db.transaction(async (tx) => {
     const [post] = await tx
-      .select({ status: linkedinPosts.status, body: linkedinPosts.body })
+      .select({ status: linkedinPosts.status, body: linkedinPosts.body, source: linkedinPosts.source, createdAt: linkedinPosts.createdAt })
       .from(linkedinPosts)
       .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)))
       .for("update");
     if (!post) throw notFound();
     const refusal = scheduleRefusal({ status: post.status, body: post.body, scheduledAt, now });
     if (refusal) throw new PostApiError(refusal.status, refusal.message);
+    // Checked now so the rep hears of it while they are here; the job checks again at publish.
+    const leak = await conversationsLeakMessage(post, tx);
+    if (leak) throw new PostApiError(409, leak);
     await tx
       .update(linkedinPosts)
       .set({ status: "scheduled", scheduledAt, error: null, updatedAt: now })

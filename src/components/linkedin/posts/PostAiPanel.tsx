@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { RiArrowDownSLine, RiBookOpenLine, RiErrorWarningLine, RiLoader4Line, RiMagicLine, RiQuillPenLine } from "@remixicon/react";
+import { RiArrowDownSLine, RiBookOpenLine, RiChat3Line, RiErrorWarningLine, RiLoader4Line, RiMagicLine, RiQuillPenLine, RiShieldCheckLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Checkbox from "@/components/alignui/checkbox";
 import * as Input from "@/components/alignui/input";
@@ -15,8 +15,13 @@ import {
   MAX_REWRITE_INSTRUCTION_LENGTH,
   MAX_TOPIC_LENGTH,
   POST_DRAFT_VARIANTS,
+  THEME_KIND_LABELS,
+  THEME_WINDOW_DAYS,
+  type LinkedinPostSource,
   type PostDraftsResponse,
   type PostKnowledgeOption,
+  type PostTheme,
+  type PostThemesResponse,
 } from "@/lib/linkedin/posts/contract";
 import { cn } from "@/utils/cn";
 
@@ -27,16 +32,32 @@ type Props = {
   authorName: string;
   body: string;
   knowledge: PostKnowledgeOption[];
+  /** How the text in the editor was written, so a rewrite of a post from a theme keeps its theme (and its leak guard). */
+  currentSource: LinkedinPostSource | null;
   disabled: boolean;
   /** The rep chose a draft or a rewrite. */
   onUse: (draft: { body: string }, answer: PostDraftsResponse, kind: "draft" | "rewrite") => void;
 };
 
-async function ask(url: string, payload: unknown): Promise<PostDraftsResponse> {
+async function ask<T = PostDraftsResponse>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : `Request failed (${response.status})`);
-  return data as PostDraftsResponse;
+  return data as T;
+}
+
+/** The theme a saved post was written from, to send back with a rewrite. */
+function themeOfSource(source: LinkedinPostSource | null): PostTheme | null {
+  if (source?.kind !== "conversations" || !source.themeTitle || !source.themeSummary || !source.themesReadAt || !source.seal) return null;
+  return { title: source.themeTitle, summary: source.themeSummary, readAt: source.themesReadAt, seal: source.seal, kind: "other", mentions: 1 };
+}
+
+function withheldNote(answer: PostDraftsResponse): string | null {
+  const count = answer.withheld.length;
+  if (!count) return null;
+  const what = answer.withheld.map((item) => item.matched).join("; ");
+  const drafts = count === 1 ? "One draft was" : `${count} drafts were`;
+  return `${drafts} held back because ${count === 1 ? "it named" : "they named"} someone from the conversations: ${what}.${answer.variants.length ? "" : " Try again."}`;
 }
 
 function voiceNote(answer: PostDraftsResponse, authorName: string): string {
@@ -49,23 +70,41 @@ function voiceNote(answer: PostDraftsResponse, authorName: string): string {
  * "Write with AI" in the composer: drafts from a topic and Knowledge, and a
  * rewrite of the current text. Shown only when OpenRouter is connected.
  */
-export function PostAiPanel({ accountId, authorName, body, knowledge, disabled, onUse }: Props) {
+export function PostAiPanel({ accountId, authorName, body, knowledge, currentSource, disabled, onUse }: Props) {
   const [topic, setTopic] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [instruction, setInstruction] = useState("");
-  const [busy, setBusy] = useState<"draft" | "rewrite" | null>(null);
+  const [busy, setBusy] = useState<"draft" | "rewrite" | "themes" | null>(null);
+  const [themes, setThemes] = useState<PostThemesResponse | null>(null);
+  const [theme, setTheme] = useState<PostTheme | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [answer, setAnswer] = useState<{ kind: "draft" | "rewrite"; response: PostDraftsResponse } | null>(null);
 
   const alwaysAdded = useMemo(() => knowledge.filter(isAlwaysAddedKnowledge), [knowledge]);
   const chosen = knowledge.filter((document) => picked.includes(document.id));
   const notPublic = chosen.filter((document) => !document.isPublic);
-  const sources = { linkedinAccountId: accountId, topic: topic.trim() || null, knowledgeDocumentIds: picked };
-  const canDraft = !disabled && !busy && Boolean(accountId) && (Boolean(topic.trim()) || picked.length > 0);
+  const sources = { linkedinAccountId: accountId, topic: topic.trim() || null, knowledgeDocumentIds: picked, ...(theme ? { theme } : {}) };
+  // A rewrite of a post from a theme sends the theme back, so the rewrite is guarded and keeps its source.
+  const rewriteTheme = theme ?? themeOfSource(currentSource);
+  const canDraft = !disabled && !busy && Boolean(accountId) && (Boolean(topic.trim()) || picked.length > 0 || Boolean(theme));
   const canRewrite = !disabled && !busy && Boolean(accountId) && Boolean(body.trim()) && Boolean(instruction.trim());
 
   const toggle = (id: string, on: boolean) =>
     setPicked((current) => (on ? (current.includes(id) ? current : [...current, id].slice(0, MAX_PICKED_KNOWLEDGE)) : current.filter((value) => value !== id)));
+
+  async function findThemes() {
+    setBusy("themes");
+    setError(null);
+    try {
+      const found = await ask<PostThemesResponse>("/api/linkedin/posts/themes", {});
+      setThemes(found);
+      setTheme(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function run(kind: "draft" | "rewrite") {
     setBusy(kind);
@@ -74,7 +113,12 @@ export function PostAiPanel({ accountId, authorName, body, knowledge, disabled, 
       const response =
         kind === "draft"
           ? await ask("/api/linkedin/posts/generate", sources)
-          : await ask("/api/linkedin/posts/rewrite", { ...sources, body, instruction: instruction.trim() });
+          : await ask("/api/linkedin/posts/rewrite", {
+              ...sources,
+              ...(rewriteTheme ? { theme: rewriteTheme } : {}),
+              body,
+              instruction: instruction.trim(),
+            });
       setAnswer({ kind, response });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -156,6 +200,65 @@ export function PostAiPanel({ accountId, authorName, body, knowledge, disabled, 
           </p>
         </div>
 
+        <div>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="text-label-sm text-text-strong-950">What prospects say</span>
+            <Button.Root variant="neutral" mode="ghost" size="xxsmall" onClick={findThemes} disabled={disabled || Boolean(busy)}>
+              <Button.Icon as={busy === "themes" ? RiLoader4Line : RiChat3Line} className={cn(busy === "themes" && "animate-spin")} />
+              {busy === "themes" ? "Reading…" : themes ? "Find again" : "Find themes"}
+            </Button.Root>
+          </div>
+          {!themes ? (
+            <p className="text-paragraph-xs text-text-sub-600">
+              Objections, questions and pain points from the last {THEME_WINDOW_DAYS} days of replies and calls. A draft is written from the theme&apos;s summary only, never from the messages.
+            </p>
+          ) : themes.themes.length === 0 ? (
+            <p className="text-paragraph-xs text-text-sub-600">
+              {themes.read === 0
+                ? `No replies or transcribed calls in the last ${THEME_WINDOW_DAYS} days yet.`
+                : `No theme could be shared without naming someone${themes.withheld ? ` (${themes.withheld} held back)` : ""}. Try again later.`}
+            </p>
+          ) : (
+            <ul className="space-y-1.5" role="radiogroup" aria-label="Themes">
+              {themes.themes.map((item) => {
+                const selected = theme?.seal === item.seal;
+                return (
+                  <li key={item.seal}>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setTheme(selected ? null : item)}
+                      disabled={disabled}
+                      className={cn(
+                        "w-full rounded-xl px-3 py-2 text-left ring-1 ring-inset transition",
+                        selected ? "bg-primary-alpha-10 ring-primary-base" : "bg-bg-white-0 ring-stroke-soft-200 hover:bg-bg-weak-50",
+                      )}
+                    >
+                      <span className="flex items-baseline justify-between gap-2">
+                        <span className="text-label-sm text-text-strong-950">{item.title}</span>
+                        <span className="shrink-0 text-paragraph-xs text-text-soft-400">
+                          {THEME_KIND_LABELS[item.kind]} · {item.mentions}×
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">{item.summary}</span>
+                    </button>
+                  </li>
+                );
+              })}
+              <li className="text-paragraph-xs text-text-soft-400">
+                From {themes.read} message{themes.read === 1 ? "" : "s"} and calls{themes.withheld ? `; ${themes.withheld} theme${themes.withheld === 1 ? "" : "s"} held back for naming someone` : ""}.
+              </li>
+            </ul>
+          )}
+          {(theme || themeOfSource(currentSource)) && (
+            <p className="mt-1.5 flex gap-1.5 text-paragraph-xs text-text-sub-600">
+              <RiShieldCheckLine className="mt-px size-3.5 shrink-0" />
+              Drafts from a theme are checked for anyone&apos;s name, company, email or phone from those conversations, here and again before the post goes out.
+            </p>
+          )}
+        </div>
+
         <Button.Root variant="primary" mode="lighter" size="small" onClick={() => run("draft")} disabled={!canDraft}>
           <Button.Icon as={busy === "draft" ? RiLoader4Line : RiMagicLine} className={cn(busy === "draft" && "animate-spin")} />
           {busy === "draft" ? "Writing…" : `Write ${POST_DRAFT_VARIANTS} drafts`}
@@ -211,6 +314,12 @@ export function PostAiPanel({ accountId, authorName, body, knowledge, disabled, 
         {answer && (
           <div className="space-y-2">
             <p className="text-paragraph-xs text-text-sub-600">{voiceNote(answer.response, authorName)} Read it before you post: the AI can still get things wrong.</p>
+            {withheldNote(answer.response) && (
+              <p className="flex gap-1.5 rounded-xl bg-warning-lighter px-3 py-2 text-paragraph-xs text-warning-dark">
+                <RiErrorWarningLine className="mt-px size-3.5 shrink-0" />
+                {withheldNote(answer.response)}
+              </p>
+            )}
             <ul className="space-y-2">
               {answer.response.variants.map((variant, index) => (
                 <li key={index} className="rounded-xl bg-bg-weak-50 p-3 ring-1 ring-inset ring-stroke-soft-200">

@@ -19,6 +19,7 @@ import {
   parseListQuery,
   parseRewriteDraft,
   parseSource,
+  parseTheme,
   parseUpdatePost,
   sniffImageType,
   validateImageUpload,
@@ -166,7 +167,7 @@ describe("parseSource and parseGeneration", () => {
     expect(parseSource({ kind: "blank" })).toEqual({ ok: true, value: { kind: "blank" } });
   });
 
-  test("refuses Phase 4's kind, a Knowledge source without documents, and extra fields", () => {
+  test("refuses an unsealed conversations source, a Knowledge source without documents, and extra fields", () => {
     expect(parseSource({ kind: "conversations", themeSummary: "x" }).ok).toBe(false);
     expect(parseSource({ kind: "knowledge" }).ok).toBe(false);
     expect(parseSource({ kind: "topic", topic: "x", messageIds: ["m1"] }).ok).toBe(false);
@@ -192,6 +193,46 @@ describe("parseSource and parseGeneration", () => {
     expect(parseCreatePost({ linkedinAccountId: "acc", body: "Hi" })).toEqual({ ok: true, value: { linkedinAccountId: "acc", body: "Hi" } });
     expect(parseUpdatePost({ generation: GENERATION }).ok).toBe(false);
     expect(parseCreatePost({ linkedinAccountId: "acc", source: { kind: "conversations" } }).ok).toBe(false);
+  });
+});
+
+const SEAL = "abcdefghijklmnopqrstuvwxyz0123456789_-AB";
+const THEME = { title: "Setup takes too long", kind: "objection", summary: "Prospects worry about the weeks it takes.", mentions: 4, readAt: "2026-11-12T10:00:00.000Z", seal: SEAL };
+
+describe("prospects' themes (Phase 4)", () => {
+  test("a theme comes back exactly as sealed", () => {
+    expect(parseTheme(THEME)).toEqual({ ok: true, value: THEME as never });
+    // Untrimmed text is kept as it is: trimming would break the seal.
+    expect(parseTheme({ ...THEME, title: " Setup " })).toMatchObject({ ok: true, value: { title: " Setup " } });
+  });
+
+  test("a theme needs its title, summary, read time and seal", () => {
+    expect(parseTheme({ ...THEME, seal: undefined }).ok).toBe(false);
+    expect(parseTheme({ ...THEME, seal: "short" }).ok).toBe(false);
+    expect(parseTheme({ ...THEME, readAt: "yesterday" }).ok).toBe(false);
+    expect(parseTheme({ ...THEME, summary: "" }).ok).toBe(false);
+    expect(parseTheme({ ...THEME, messageIds: ["m1"] }).ok).toBe(false);
+    // Display-only fields fall back rather than fail.
+    expect(parseTheme({ ...THEME, kind: "rant", mentions: -1 })).toMatchObject({ ok: true, value: { kind: "other", mentions: 1 } });
+  });
+
+  test("generate takes a theme alone", () => {
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", theme: THEME })).toEqual({
+      ok: true,
+      value: { linkedinAccountId: "acc", topic: null, knowledgeDocumentIds: [], theme: THEME as never },
+    });
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", theme: { ...THEME, seal: "" } }).ok).toBe(false);
+    expect(parseRewriteDraft({ linkedinAccountId: "acc", body: "Hi", instruction: "shorter", theme: THEME })).toMatchObject({ ok: true, value: { theme: THEME } });
+  });
+
+  test("a conversations source keeps the theme and its seal, never message ids", () => {
+    const source = { kind: "conversations", themeTitle: THEME.title, themeSummary: THEME.summary, themesReadAt: THEME.readAt, seal: SEAL };
+    expect(parseSource(source)).toEqual({ ok: true, value: source as never });
+    expect(parseSource({ ...source, messageIds: ["m1"] }).ok).toBe(false);
+    expect(parseSource({ ...source, personIds: ["p1"] }).ok).toBe(false);
+    expect(parseSource({ ...source, seal: undefined }).ok).toBe(false);
+    // The theme fields belong to a conversations source only.
+    expect(parseSource({ kind: "topic", topic: "x", themeSummary: "y" }).ok).toBe(false);
   });
 });
 

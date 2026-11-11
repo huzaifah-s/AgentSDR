@@ -52,6 +52,11 @@ export type PostPromptInput = {
   knowledge: readonly PostKnowledgeDocument[];
   /** Always added: the organization's Knowledge marked always include and tagged public. */
   companyContext: readonly PostKnowledgeDocument[];
+  /**
+   * A prospects' theme (Phase 4): its title and summary only, never the
+   * messages it was found in.
+   */
+  theme?: { title: string; summary: string } | null;
 };
 
 export type RewritePromptInput = PostPromptInput & { currentPost: string; instruction: string };
@@ -135,13 +140,18 @@ function baseContext(input: PostPromptInput, templates: PostTemplates) {
   if (topic) snapshot.topic = topic;
   if (knowledge.length) snapshot.knowledge = knowledge;
   if (companyContext.length) snapshot.companyContext = companyContext;
+  const themeTitle = clean(input.theme?.title);
+  const themeSummary = clean(input.theme?.summary);
+  const theme = themeTitle && themeSummary ? { title: themeTitle, summary: themeSummary } : null;
+  if (theme) snapshot.theme = theme;
 
   const systemPrompt = fillPrompt(templates["linkedin/post-system"], {
     past_posts: pastPosts.length > 0,
     hashtags,
+    theme: Boolean(theme),
     max_length: MAX_POST_LENGTH.toLocaleString("en-US"),
   });
-  return { snapshot, systemPrompt, topic, hasKnowledge: knowledge.length > 0, hashtags };
+  return { snapshot, systemPrompt, topic, hasKnowledge: knowledge.length > 0, hasTheme: Boolean(theme), hashtags };
 }
 
 /** The prompt for new drafts: `variants` different posts from the topic and Knowledge. Pure. */
@@ -150,13 +160,14 @@ export function buildPostPrompt(
   templates: PostTemplates = CODE_TEMPLATES,
   variants: number = POST_DRAFT_VARIANTS,
 ): BuiltPostPrompt {
-  const { snapshot, systemPrompt, topic, hasKnowledge, hashtags } = baseContext(input, templates);
-  if (!topic && !hasKnowledge) throw new Error("A post draft needs a topic or a Knowledge document");
+  const { snapshot, systemPrompt, topic, hasKnowledge, hasTheme, hashtags } = baseContext(input, templates);
+  if (!topic && !hasKnowledge && !hasTheme) throw new Error("A post draft needs a topic, a theme or a Knowledge document");
   return {
     systemPrompt,
     userPrompt: fillPrompt(templates["linkedin/post-user"], {
       variants,
       topic: Boolean(topic),
+      theme: hasTheme,
       context_json: JSON.stringify(snapshot, null, 2),
     }),
     toolDescription: fillPrompt(templates["linkedin/post-tool"], {}),

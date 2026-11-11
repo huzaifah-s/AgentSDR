@@ -8,13 +8,18 @@ import {
   MAX_POST_IMAGES,
   MAX_POST_LENGTH,
   MAX_REWRITE_INSTRUCTION_LENGTH,
+  MAX_THEME_SUMMARY_LENGTH,
+  MAX_THEME_TITLE_LENGTH,
   MAX_TOPIC_LENGTH,
+  THEME_KINDS,
   POST_IMAGE_TYPES,
   POST_PROMPT_NAMES,
   POST_STATUSES,
   type LinkedinPostGeneration,
   type LinkedinPostSource,
   type LinkedinPostStatus,
+  type PostTheme,
+  type ThemeKind,
 } from "./contract";
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -100,22 +105,69 @@ function readTopic(value: unknown): Parsed<string | null> {
   return ok(topic || null);
 }
 
+const ISO_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+const SEAL_PATTERN = /^[A-Za-z0-9_-]{20,100}$/;
+
+/** The sealed part of a theme: what the server signed. Its seal is checked by the server (themeSeal.server.ts). */
+type SealedTheme = { title: string; summary: string; readAt: string; seal: string };
+
+function readSealedTheme(object: Record<string, unknown>, names: { title: string; summary: string; readAt: string }): Parsed<SealedTheme> {
+  const title = object[names.title];
+  const summary = object[names.summary];
+  const readAt = object[names.readAt];
+  if (typeof title !== "string" || !title.trim() || title.length > MAX_THEME_TITLE_LENGTH) return fail("The theme has no title");
+  if (typeof summary !== "string" || !summary.trim() || summary.length > MAX_THEME_SUMMARY_LENGTH) return fail("The theme has no summary");
+  if (typeof readAt !== "string" || !ISO_SECONDS.test(readAt) || Number.isNaN(Date.parse(readAt))) return fail("The theme has no time it was read");
+  if (typeof object.seal !== "string" || !SEAL_PATTERN.test(object.seal)) return fail("The theme is not one AgentSDR found. Find themes again.");
+  // Exactly as sealed: no trimming, or the seal would not match.
+  return ok({ title, summary, readAt, seal: object.seal });
+}
+
+/**
+ * A prospects' theme as /themes answered it, sent back to /generate or
+ * /rewrite: `{ title, kind, summary, mentions, readAt, seal }`.
+ */
+export function parseTheme(value: unknown): Parsed<PostTheme> {
+  const object = asObject(value);
+  if (!object) return fail("theme must be an object");
+  const unknown = Object.keys(object).filter((key) => !["title", "kind", "summary", "mentions", "readAt", "seal"].includes(key));
+  if (unknown.length) return fail(`theme has unknown field(s): ${unknown.join(", ")}`);
+  const sealed = readSealedTheme(object, { title: "title", summary: "summary", readAt: "readAt" });
+  if (!sealed.ok) return sealed;
+  const kind = (THEME_KINDS as readonly string[]).includes(object.kind as string) ? (object.kind as ThemeKind) : "other";
+  const mentions = typeof object.mentions === "number" && Number.isInteger(object.mentions) && object.mentions > 0 ? object.mentions : 1;
+  return ok({ ...sealed.value, kind, mentions });
+}
+
 /**
  * `source` as the composer sends it back from a generate or rewrite answer.
- * `conversations` is Phase 4's, written by the server only.
+ * `conversations` (Phase 4) must carry the server's seal over its theme,
+ * which the server checks before saving: the browser can only hand back a
+ * source the server wrote.
  */
 export function parseSource(value: unknown): Parsed<LinkedinPostSource> {
   const object = asObject(value);
   if (!object) return fail("source must be an object");
-  const unknown = Object.keys(object).filter((key) => !["kind", "topic", "knowledgeDocumentIds"].includes(key));
+  const allowed = object.kind === "conversations"
+    ? ["kind", "topic", "knowledgeDocumentIds", "themeTitle", "themeSummary", "themesReadAt", "seal"]
+    : ["kind", "topic", "knowledgeDocumentIds"];
+  const unknown = Object.keys(object).filter((key) => !allowed.includes(key));
   if (unknown.length) return fail(`source has unknown field(s): ${unknown.join(", ")}`);
-  if (object.kind !== "blank" && object.kind !== "topic" && object.kind !== "knowledge") return fail("source.kind must be blank, topic or knowledge");
+  if (object.kind !== "blank" && object.kind !== "topic" && object.kind !== "knowledge" && object.kind !== "conversations") {
+    return fail("source.kind must be blank, topic, knowledge or conversations");
+  }
   const topic = readTopic(object.topic);
   if (!topic.ok) return topic;
   const ids = readKnowledgeIds(object.knowledgeDocumentIds);
   if (!ids.ok) return ids;
   if (object.kind === "knowledge" && ids.value.length === 0) return fail("A Knowledge source names its documents");
-  return ok({ kind: object.kind, ...(topic.value ? { topic: topic.value } : {}), ...(ids.value.length ? { knowledgeDocumentIds: ids.value } : {}) });
+  const base = { ...(topic.value ? { topic: topic.value } : {}), ...(ids.value.length ? { knowledgeDocumentIds: ids.value } : {}) };
+  if (object.kind === "conversations") {
+    const theme = readSealedTheme(object, { title: "themeTitle", summary: "themeSummary", readAt: "themesReadAt" });
+    if (!theme.ok) return theme;
+    return ok({ kind: "conversations", ...base, themeTitle: theme.value.title, themeSummary: theme.value.summary, themesReadAt: theme.value.readAt, seal: theme.value.seal });
+  }
+  return ok({ kind: object.kind, ...base });
 }
 
 /** `generation`: the model and the prompt versions of the AI draft a post started from. */
@@ -187,7 +239,13 @@ export function parseUpdatePost(input: unknown): Parsed<UpdatePostInput> {
   return ok(update);
 }
 
-export type GenerateDraftsInput = { linkedinAccountId: string; topic: string | null; knowledgeDocumentIds: string[] };
+export type GenerateDraftsInput = {
+  linkedinAccountId: string;
+  topic: string | null;
+  knowledgeDocumentIds: string[];
+  /** A prospects' theme to write from (Phase 4); its seal is checked by the server. */
+  theme?: PostTheme;
+};
 
 function readDraftSources(object: Record<string, unknown>): Parsed<GenerateDraftsInput> {
   const account = readAccountId(object.linkedinAccountId);
@@ -197,22 +255,30 @@ function readDraftSources(object: Record<string, unknown>): Parsed<GenerateDraft
   const ids = readKnowledgeIds(object.knowledgeDocumentIds);
   if (!ids.ok) return ids;
   if (ids.value.length > MAX_PICKED_KNOWLEDGE) return fail(`Choose at most ${MAX_PICKED_KNOWLEDGE} Knowledge documents.`);
-  return ok({ linkedinAccountId: account.value, topic: topic.value, knowledgeDocumentIds: ids.value });
+  let theme: PostTheme | undefined;
+  if (object.theme !== undefined && object.theme !== null) {
+    const parsed = parseTheme(object.theme);
+    if (!parsed.ok) return parsed;
+    theme = parsed.value;
+  }
+  return ok({ linkedinAccountId: account.value, topic: topic.value, knowledgeDocumentIds: ids.value, ...(theme ? { theme } : {}) });
 }
 
-/** POST /generate — `{ linkedinAccountId, topic?, knowledgeDocumentIds? }`, a topic or a document at least. */
+/** POST /generate — `{ linkedinAccountId, topic?, knowledgeDocumentIds?, theme? }`, a topic, a theme or a document at least. */
 export function parseGenerateDrafts(input: unknown): Parsed<GenerateDraftsInput> {
   const object = asObject(input);
   if (!object) return fail("Expected a JSON object");
   const sources = readDraftSources(object);
   if (!sources.ok) return sources;
-  if (!sources.value.topic && sources.value.knowledgeDocumentIds.length === 0) return fail("Write a topic or choose a Knowledge document.");
+  if (!sources.value.topic && !sources.value.theme && sources.value.knowledgeDocumentIds.length === 0) {
+    return fail("Write a topic, pick a theme or choose a Knowledge document.");
+  }
   return sources;
 }
 
 export type RewriteDraftInput = GenerateDraftsInput & { body: string; instruction: string };
 
-/** POST /rewrite — `{ linkedinAccountId, body, instruction, topic?, knowledgeDocumentIds? }`. */
+/** POST /rewrite — `{ linkedinAccountId, body, instruction, topic?, knowledgeDocumentIds?, theme? }`. */
 export function parseRewriteDraft(input: unknown): Parsed<RewriteDraftInput> {
   const object = asObject(input);
   if (!object) return fail("Expected a JSON object");

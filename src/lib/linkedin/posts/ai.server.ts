@@ -13,8 +13,12 @@ import {
   type LinkedinPostSource,
   type PostDraftsResponse,
   type PostKnowledgeOption,
+  type PostTheme,
+  type PostThemesResponse,
 } from "./contract";
 import { generatePostDrafts, rewritePost, type PostDraftDependencies, type PostDraftResult, type PostKnowledgeDocument } from "./draft";
+import { describeLeaks, findLeaks, type LeakTerm } from "./leakGuard";
+import { findPostThemes, guardTermsFor, verifyTheme, type ThemeDependencies } from "./themes.server";
 import { PostApiError } from "./posts.server";
 import type { GenerateDraftsInput, RewriteDraftInput } from "./requests";
 import { loadAuthorVoice as sharedVoiceLoader, type AuthorVoice, type VoiceAccount } from "./voice.server";
@@ -99,8 +103,14 @@ export type ResolvedPostSources = {
   source: LinkedinPostSource;
 };
 
+/** The theme's seal must be this organization's: a theme from elsewhere, or edited in the browser, is refused. */
+function assertThemeSealed(theme: PostTheme | null | undefined): void {
+  if (theme && !verifyTheme(theme)) throw new PostApiError(400, "This theme is out of date or was changed. Find themes again.");
+}
+
 /** The account and Knowledge a draft is written from, all the organization's own. */
-export async function resolvePostSources(input: { linkedinAccountId: string; topic: string | null; knowledgeDocumentIds: string[] }): Promise<ResolvedPostSources> {
+export async function resolvePostSources(input: { linkedinAccountId: string; topic: string | null; knowledgeDocumentIds: string[]; theme?: PostTheme | null }): Promise<ResolvedPostSources> {
+  assertThemeSealed(input.theme);
   const account = await accountInOrg(input.linkedinAccountId);
   const rows = await knowledgeRows();
   const byId = new Map(rows.map((row) => [row.id, row]));
@@ -113,20 +123,22 @@ export async function resolvePostSources(input: { linkedinAccountId: string; top
   const always = rows.filter((row) => isAlwaysAddedKnowledge(row) && !pickedIds.has(row.id));
   const asDocument = (row: KnowledgeRow): PostKnowledgeDocument => ({ id: row.id, title: row.title, kind: row.kind, content: row.content });
   const used = [...picked, ...always].map((row) => row.id);
+  const base = { ...(input.topic ? { topic: input.topic } : {}), ...(used.length ? { knowledgeDocumentIds: used } : {}) };
   return {
     account,
     knowledge: picked.map(asDocument),
     companyContext: always.map(asDocument),
-    source: {
-      kind: picked.length ? "knowledge" : "topic",
-      ...(input.topic ? { topic: input.topic } : {}),
-      ...(used.length ? { knowledgeDocumentIds: used } : {}),
-    },
+    source: input.theme
+      ? // Server-written: the theme's title and summary and when it was read, sealed; never a message or person id.
+        { kind: "conversations", ...base, themeTitle: input.theme.title, themeSummary: input.theme.summary, themesReadAt: input.theme.readAt, seal: input.theme.seal }
+      : { kind: picked.length ? "knowledge" : "topic", ...base },
   };
 }
 
 export type PostAiDependencies = PostDraftDependencies & {
   loadVoice?: (account: VoiceAccount) => Promise<AuthorVoice>;
+  /** The leak guard's terms for a theme read at a time; the source set in the database by default. */
+  guardTerms?: (readAt: Date) => Promise<LeakTerm[]>;
   /** Skips the OpenRouter check, for a caller that injects `complete` (tests). */
   skipOpenRouterCheck?: boolean;
 };
@@ -139,9 +151,29 @@ async function voiceFor(account: ResolvedPostSources["account"], dependencies: P
   return (dependencies.loadVoice ?? sharedVoiceLoader)(account);
 }
 
-function respond(result: PostDraftResult, source: LinkedinPostSource, voice: AuthorVoice): PostDraftsResponse {
+/**
+ * The leak guard over drafts from a theme: a draft naming anyone in the
+ * theme's source set is held back, with what matched. Drafts from a topic or
+ * Knowledge pass as they are.
+ */
+async function guardDrafts(result: PostDraftResult, theme: PostTheme | null, dependencies: PostAiDependencies) {
+  if (!theme) return { variants: result.variants, withheld: [] };
+  const terms = await (dependencies.guardTerms ?? guardTermsFor)(new Date(theme.readAt));
+  const variants: { body: string }[] = [];
+  const withheld: { matched: string }[] = [];
+  for (const variant of result.variants) {
+    const leaks = findLeaks(variant.body, terms);
+    if (leaks.length) withheld.push({ matched: describeLeaks(leaks) });
+    else variants.push(variant);
+  }
+  return { variants, withheld };
+}
+
+async function respond(result: PostDraftResult, source: LinkedinPostSource, voice: AuthorVoice, theme: PostTheme | null, dependencies: PostAiDependencies): Promise<PostDraftsResponse> {
+  const guarded = await guardDrafts(result, theme, dependencies);
   return {
-    variants: result.variants,
+    variants: guarded.variants,
+    withheld: guarded.withheld,
     source,
     generation: result.generation,
     voice: { status: voice.status, pastPosts: voice.pastPosts.length },
@@ -172,12 +204,13 @@ export async function draftPosts(input: GenerateDraftsInput, dependencies: PostA
         topic: input.topic,
         knowledge: sources.knowledge,
         companyContext: sources.companyContext,
-        metadata: { linkedinAccountId: sources.account.id, knowledgeDocuments: sources.knowledge.length, companyContext: sources.companyContext.length },
+        theme: input.theme,
+        metadata: { linkedinAccountId: sources.account.id, knowledgeDocuments: sources.knowledge.length, companyContext: sources.companyContext.length, theme: Boolean(input.theme) },
       },
       dependencies,
     ),
   );
-  return respond(result, sources.source, voice);
+  return respond(result, sources.source, voice, input.theme ?? null, dependencies);
 }
 
 /** POST /rewrite: the current text once more, as the instruction asks. */
@@ -195,12 +228,22 @@ export async function rewritePostDraft(input: RewriteDraftInput, dependencies: P
         companyContext: sources.companyContext,
         currentPost: input.body,
         instruction: input.instruction,
-        metadata: { linkedinAccountId: sources.account.id, knowledgeDocuments: sources.knowledge.length, companyContext: sources.companyContext.length },
+        theme: input.theme,
+        metadata: { linkedinAccountId: sources.account.id, knowledgeDocuments: sources.knowledge.length, companyContext: sources.companyContext.length, theme: Boolean(input.theme) },
       },
       dependencies,
     ),
   );
   // A rewrite keeps how the post was sourced; without sources of its own it says so plainly.
-  const source: LinkedinPostSource = input.topic || input.knowledgeDocumentIds.length ? sources.source : { kind: "blank", ...(sources.source.knowledgeDocumentIds ? { knowledgeDocumentIds: sources.source.knowledgeDocumentIds } : {}) };
-  return respond(result, source, voice);
+  const source: LinkedinPostSource =
+    input.theme || input.topic || input.knowledgeDocumentIds.length
+      ? sources.source
+      : { kind: "blank", ...(sources.source.knowledgeDocumentIds ? { knowledgeDocumentIds: sources.source.knowledgeDocumentIds } : {}) };
+  return respond(result, source, voice, input.theme ?? null, dependencies);
+}
+
+/** POST /themes: what prospects said in the last 30 days, as themes to write from. */
+export async function postThemes(dependencies: PostAiDependencies & ThemeDependencies = {}): Promise<PostThemesResponse> {
+  if (!dependencies.skipOpenRouterCheck) await requireOpenRouter();
+  return guarded(() => findPostThemes(dependencies));
 }

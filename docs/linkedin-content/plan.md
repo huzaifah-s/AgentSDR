@@ -4,7 +4,9 @@ Status: Phase 1 built (11 Nov 2026), not yet live: the migration has not
 run on the production database, and no real post has been published. What
 was built and what changed from the plan: "Phase 1 as built", under Phase 1.
 Phase 2 (AI drafts) built (12 Nov 2026), not yet verified end to end: see
-"Phase 2 as built". Phases 3–5 planned.
+"Phase 2 as built". Phase 3 (scheduling) built (12 Nov 2026, `5dcfcb8`),
+its e2e not run. Phase 4 (posts from what prospects say) built (12 Nov
+2026), its e2e not run: see "Phase 4 as built". Phase 5 planned.
 
 Waiting on (Phase 1):
 
@@ -51,6 +53,26 @@ Waiting on (Phase 2):
       integration is saved again, or by
       `scripts/seed-langfuse-prompts.ts --org <id>` (with the user's yes).
       Until then those organizations use the copies in code.
+
+Waiting on (Phases 3 and 4):
+
+- [ ] **Run the e2e** covering Phases 2–4: `scripts/e2e/linkedin-posts.ts`
+      has the Phase 3 and Phase 4 checks (themes 409 without OpenRouter; a
+      seeded prospect's call read, redacted, a theme and a draft naming
+      them dropped or withheld; the sealed source saved without ids; a
+      tampered source refused; scheduling and publishing an edited post
+      that names them refused; B reading none of A's prospects and unable
+      to use A's theme). Never run. Same setup as Phase 2's.
+- [ ] **Real AI calls**, with the user's yes: one themes call and one draft
+      from a theme on a real organization's OpenRouter key, on its real
+      replies and calls; check the summaries name nobody.
+- [ ] **Prompts in Langfuse**: `linkedin/post-themes`, `-user` and `-tool`,
+      and the changed `linkedin/post-system` / `linkedin/post-user`, reach
+      an existing project only through
+      `scripts/seed-langfuse-prompts.ts --org <id>` (`--update` for the two
+      changed ones), with the user's yes.
+- [ ] **One real scheduled publish** through the job's endpoint
+      (`/api/linkedin/jobs/publish-posts`), on a test account.
 
 Decided (11 Nov 2026): posts go out on the person's own profile only
 (decision 1a); any member may post from any of the organization's
@@ -357,6 +379,61 @@ must never end up in a public post.
   - `source` keeps the theme summary, not the message ids, so the post row
     does not point at anyone.
 - **Who sees it**: every member already sees the CRM, so no new permission.
+
+### Phase 4 as built (12 Nov 2026)
+
+- Code: `leakGuard.ts` (pure: `leakTerms`, `findLeaks`, `redactLeaks`,
+  `describeLeaks`), `themes.ts` (pure: reply text, prompt, answer check),
+  `themes.server.ts` (the source set, the call, `guardTermsFor`),
+  `themeSeal.server.ts`, `leakCheck.server.ts` (the guard on a saved
+  post), route `POST /api/linkedin/posts/themes`, "What prospects say" in
+  `PostAiPanel.tsx`. Prompts `linkedin/post-themes`, `-user`, `-tool`; the
+  system and user post prompts gained a `{{#theme}}` section.
+- **The source set**: inbound `crm_conversation_messages` (email, LinkedIn
+  and WhatsApp all land there) and the lead's side of transcripts of
+  `call_sessions` with `transcript_status = 'done'`, in the 30 days before
+  the read, newest first, 50 in all. A reply's quoted history ("> …",
+  "On … wrote:", "Original Message", a later "From:") is cut; each item is
+  clipped to 1,500 characters.
+- **Redaction before the model**: the people's own names, companies,
+  emails and phones are replaced by `[person]`, `[company]`, … in what the
+  themes call reads. Not asked for in the plan; cheap, with the same terms.
+- **Themes** come back 3–6 (1–3 from fewer than six messages), most raised
+  first. A theme whose title or summary names someone in the source set is
+  dropped, and the answer counts it ("held back").
+- **What the guard matches** (decided here; see the header of
+  `leakGuard.ts`): full names in any case and either order; a surname
+  alone (3+ letters) only capitalised; a first name alone never (it
+  rarely identifies anyone, and "Will" or "Grace" would block ordinary
+  sentences); a company's name without its legal suffix (one word only
+  capitalised) and its domain unless a mail provider's; emails; phones by
+  their last 8 digits however grouped; LinkedIn slugs of 5+ characters;
+  accents folded. Names mentioned *inside* a message (a colleague) are not
+  in the source set: the prompt's rule covers those.
+- **Drafts**: a draft that matches is withheld, the others shown, and the
+  answer says what matched ("Zelda Quill (a name)"; a phone by its last 4
+  digits). No retry: the drafting model never saw the people, so a match
+  is a coincidence the rep should see.
+- **"Written server-side" is a seal.** The composer saves a post (and may
+  not have one yet when the drafts arrive), so the server cannot write the
+  row itself. Instead each theme carries an HMAC (`INTEGRATION_CREDENTIALS_KEY`)
+  over (organization, read time, title, summary); `source` keeps those
+  four and the seal, never a message or person id, and saving checks the
+  seal. A browser can neither invent a theme nor move its read time; a
+  theme from another organization does not verify.
+- **The guard at publish** re-reads the source set from the database: the
+  people in the 30 days before `source.themesReadAt`, up to 1,000 items,
+  a superset of the 50 the themes call read (stricter, never looser). It
+  runs inside the publish claim (a refusal leaves the post as it was; the
+  job fails a scheduled one with the message) and also at Schedule, so the
+  rep hears of it while they are there.
+- **Once from conversations, always guarded**: saving a later draft from a
+  topic or Knowledge on such a post keeps its `conversations` source, since
+  the text may still carry the theme draft's words. A rewrite sends the
+  post's theme back, so it is guarded and keeps the source.
+- Tests: `leakGuard.test.ts`, `themes.test.ts` (items, prompt, answer
+  check, seals, the call with fakes, the guard on a saved post), more in
+  `requests.test.ts`, `draft.test.ts`, `linkedin.test.ts`.
 
 ## Phase 5 (after v1): the business's content brief
 

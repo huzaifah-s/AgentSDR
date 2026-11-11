@@ -9,6 +9,7 @@ import { latestDailySlot } from "@/lib/scheduler/slots";
 import { inOrg, runInOrganization } from "@/lib/tenancy/scope";
 import { createLinkedinPost, UnipilePostError, type PostImage } from "@/services/unipile.posts";
 import { UNCERTAIN_PUBLISH_ERROR, type LinkedinPostStatus } from "./contract";
+import { conversationsLeakMessage } from "./leakCheck.server";
 import { failureError, postUrlFor, publishRefusal, STALE_PUBLISHING_MS, type PublishRefusal } from "./publishRules";
 import { linkedinPosts } from "./schema";
 import { getPostImageBytes } from "./storage";
@@ -118,6 +119,11 @@ async function claim(postId: string, publishedBy: string, now: Date, scheduled: 
       postsPerDay,
     });
     if (refusal) throw new PostPublishRefusedError(refusal);
+
+    // The leak guard, once more on the text as it is now (Phase 4). The job
+    // records the refusal as the post's failure: it will not pass by waiting.
+    const leak = await conversationsLeakMessage(post, tx);
+    if (leak) throw new PostPublishRefusedError({ status: 409, message: leak });
 
     await tx
       .update(linkedinPosts)

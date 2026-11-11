@@ -50,12 +50,22 @@ export type LinkedinPostAttachment = {
   bytes: number;
 };
 
-/** How a post was written. Phase 1 writes only `blank`. */
+/**
+ * How a post was written. Phase 1 writes only `blank`. A `conversations`
+ * source (Phase 4) keeps the theme's title and summary and when the
+ * messages were read, never a message or person id, with the server's
+ * seal over them (see themeSeal.server.ts): only a theme the server found
+ * can be recorded, and the leak guard runs again at publish.
+ */
 export type LinkedinPostSource = {
   kind: "blank" | "topic" | "knowledge" | "conversations";
   topic?: string;
   knowledgeDocumentIds?: string[];
+  themeTitle?: string;
   themeSummary?: string;
+  /** ISO time the prospects' messages were read: the leak guard's source set is the 30 days before it. */
+  themesReadAt?: string;
+  seal?: string;
 };
 
 /** The AI draft a post started from (Phase 2). */
@@ -237,6 +247,11 @@ export type PostVoiceStatus = "read" | "none" | "unavailable";
 /** What /api/linkedin/posts/generate and /rewrite answer. */
 export type PostDraftsResponse = {
   variants: { body: string }[];
+  /**
+   * Drafts from a prospects' theme the leak guard held back, with what in
+   * each matched someone in the source conversations. Empty otherwise.
+   */
+  withheld: { matched: string }[];
   /** What to record on the post when the rep uses a variant. */
   source: LinkedinPostSource;
   generation: LinkedinPostGeneration;
@@ -247,3 +262,50 @@ export type PostDraftsResponse = {
 export function countHashtags(text: string): number {
   return text.match(/(^|[^\p{L}\p{N}_&#/])#[\p{L}_][\p{L}\p{N}_]*/gu)?.length ?? 0;
 }
+
+// ------------------------------------------------------------ prospects' themes (Phase 4)
+
+/** The window of prospects' replies and calls a theme is found in. */
+export const THEME_WINDOW_DAYS = 30;
+
+/** Messages and calls read for themes, newest first ("up to ~50"). */
+export const THEME_SOURCE_LIMIT = 50;
+
+/** Themes asked for: 3–6, fewer when there is little to read. */
+export const MIN_THEMES = 3;
+export const MAX_THEMES = 6;
+
+export const THEME_KINDS = ["objection", "question", "pain_point", "other"] as const;
+export type ThemeKind = (typeof THEME_KINDS)[number];
+
+export const THEME_KIND_LABELS: Readonly<Record<ThemeKind, string>> = {
+  objection: "Objection",
+  question: "Question",
+  pain_point: "Pain point",
+  other: "Theme",
+};
+
+export const MAX_THEME_TITLE_LENGTH = 120;
+export const MAX_THEME_SUMMARY_LENGTH = 1200;
+
+/** One theme, as /api/linkedin/posts/themes answers and /generate takes it back. */
+export type PostTheme = {
+  title: string;
+  kind: ThemeKind;
+  summary: string;
+  /** How many of the messages raised it. */
+  mentions: number;
+  /** ISO time the messages were read. */
+  readAt: string;
+  /** The server's seal over (organization, readAt, title, summary). */
+  seal: string;
+};
+
+/** What /api/linkedin/posts/themes answers. */
+export type PostThemesResponse = {
+  themes: PostTheme[];
+  /** Messages and calls read. */
+  read: number;
+  /** Themes dropped because their summary named someone. */
+  withheld: number;
+};

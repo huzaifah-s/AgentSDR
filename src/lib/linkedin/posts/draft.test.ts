@@ -97,7 +97,7 @@ describe("buildPostPrompt", () => {
   test("works from Knowledge alone, or a topic alone, but not from nothing", () => {
     expect(buildPostPrompt(input({ topic: null })).userPrompt).toContain("There is no topic");
     expect(buildPostPrompt(input({ knowledge: [] })).snapshot.knowledge).toBeUndefined();
-    expect(() => buildPostPrompt(input({ topic: "  ", knowledge: [] }))).toThrow(/topic or a Knowledge document/);
+    expect(() => buildPostPrompt(input({ topic: "  ", knowledge: [] }))).toThrow(/topic, a theme or a Knowledge document/);
   });
 
   test("uses the templates it is given (Langfuse's versions)", () => {

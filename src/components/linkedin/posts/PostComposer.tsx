@@ -481,6 +481,7 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
               authorName={accountName(account)}
               body={body}
               knowledge={knowledge}
+              currentSource={origin?.source ?? post?.source ?? null}
               disabled={Boolean(busy)}
               onUse={onUseDraft}
             />

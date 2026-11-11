@@ -15,6 +15,15 @@
  * organization A's OpenRouter is switched off for the route calls (restored
  * at the end) and organization B never has one.
  *
+ * Phase 4, prospects' themes: a seeded prospect (a person, a company and a
+ * transcribed call in A, removed at the end). The themes route answers 409
+ * without OpenRouter; in this process, the themes call sees the call's words
+ * with the prospect redacted, a theme naming them is dropped, a draft naming
+ * them is withheld, the saved post keeps the sealed summary and no ids, a
+ * tampered source is refused, and the leak guard blocks scheduling and
+ * publishing an edited post that names them. B sees none of A's messages and
+ * cannot use A's theme.
+ *
  *   MOCK_TLS_CERT=cert.pem MOCK_TLS_KEY=key.pem \
  *   INITIAL_OWNER_EMAIL=… INITIAL_OWNER_PASSWORD=… \
  *   BASE_URL=http://localhost:3100 bun run --conditions=react-server scripts/e2e/linkedin-posts.ts
@@ -33,8 +42,8 @@ import { createServer } from "node:https";
 import postgres from "postgres";
 import { createKnowledgeDocument } from "@/lib/crm/knowledge-service";
 import { encryptIntegrationCredentials } from "@/lib/integrations/credentials";
-import { draftPosts, rewritePostDraft } from "@/lib/linkedin/posts/ai.server";
-import { UNCERTAIN_PUBLISH_ERROR, type PostDraftsResponse } from "@/lib/linkedin/posts/contract";
+import { draftPosts, postThemes, rewritePostDraft } from "@/lib/linkedin/posts/ai.server";
+import { UNCERTAIN_PUBLISH_ERROR, type PostDraftsResponse, type PostTheme } from "@/lib/linkedin/posts/contract";
 import type { PostCompletion, PostCompletionInput } from "@/lib/linkedin/posts/draft";
 import { createVoiceLoader, readPastPostsFromUnipile } from "@/lib/linkedin/posts/voice.server";
 import { runInOrganization } from "@/lib/tenancy/scope";
@@ -190,6 +199,8 @@ async function main() {
 
   // A: Unipile → the mock, R2 off, OpenRouter off for the AI routes. Kept to restore afterwards.
   let savedByok: Record<string, unknown> | null = null;
+  /** The Phase 4 prospect seeded in A, removed at the end. */
+  let prospect: { personId: string; companyId: string; callId: string } | null = null;
   const [savedUnipile] = await sql<{ id: string; payload: string }[]>`
     select c.provider_id as id, c.encrypted_payload as payload from grid_provider_credentials c join grid_providers g on g.id = c.provider_id
      where g.organization_id = ${orgA.id} and g.key = 'platform-unipile'`;
@@ -390,6 +401,93 @@ async function main() {
     const conversations = await call(a, "POST", "/api/linkedin/posts", { linkedinAccountId: acc.id, body: "x", source: { kind: "conversations", themeSummary: "x" } });
     check(conversations.status === 400, "a client cannot claim a conversations source (Phase 4 writes it)", conversations.json);
 
+    // ------------------------------------------- Phase 4: prospects' themes (A)
+    console.log("\nA: what prospects say");
+    const [company] = await sql<{ id: string }[]>`
+      insert into companies (organization_id, domain, name, source) values (${orgA.id}, 'quillfeather-e2e.test', 'Quillfeather Labs Ltd', 'e2e') returning id`;
+    const [person] = await sql<{ id: string }[]>`
+      insert into people (organization_id, first_name, last_name, full_name, email, phone, company_id, source)
+      values (${orgA.id}, 'Zelda', 'Quill', 'Zelda Quill', 'zelda@quillfeather-e2e.test', '+15550104242', ${company.id}, 'e2e') returning id`;
+    const [callRow] = await sql<{ id: string }[]>`
+      insert into call_sessions (organization_id, person_id, phone, status, recording_key, upload_token_hash, token_expires_at, transcript_status, transcript, started_at, ended_at)
+      values (${orgA.id}, ${person.id}, '+15550104242', 'recorded', 'e2e/none.webm', 'e2e-not-a-token', now(), 'done',
+        ${sql.json({ language: "en", summary: "E2E call", model: "fake/model", utterances: [
+          { startSeconds: 0, speaker: "rep", text: "Hi Zelda" },
+          { startSeconds: 2, speaker: "lead", text: "I'm Zelda Quill at Quillfeather Labs. E2E-RAW-WORDS: setup took us months with the last vendor. Call me on +1 555 010 4242." },
+        ] } as never)}, now() - interval '1 hour', now() - interval '50 minutes')
+      returning id`;
+    prospect = { personId: person.id, companyId: company.id, callId: callRow.id };
+
+    const themes409 = await call(a, "POST", "/api/linkedin/posts/themes", {});
+    check(themes409.status === 409 && String(themes409.json.error).includes("OpenRouter"), "the themes route answers 409 without OpenRouter", themes409.json);
+
+    const themePrompts: PostCompletionInput[] = [];
+    const fakeThemes: PostCompletion = async (input) => {
+      themePrompts.push(input);
+      const range = (input.jsonSchema as { properties: { themes: { minItems: number } } }).properties.themes;
+      const list = [{ title: "Quillfeather Labs wants faster setup", kind: "objection", summary: "Quillfeather Labs keeps asking.", mentions: 1 }];
+      for (let i = list.length; i < range.minItems; i += 1) list.push({ title: `E2E theme ${i}`, kind: "pain_point", summary: `Setup takes too long for many teams (${i}).`, mentions: 1 });
+      if (list.length < 2) list.push({ title: "E2E theme setup", kind: "pain_point", summary: "Setup takes too long for many teams.", mentions: 1 });
+      const text = JSON.stringify({ themes: list.slice(0, Math.max(range.minItems, 2)) });
+      input.accept(text);
+      return { text, provider: "fake", model: "fake/e2e-model" };
+    };
+    const found = await runInOrganization(orgA.id, () => postThemes({ complete: fakeThemes, skipOpenRouterCheck: true }));
+    const themesSent = themePrompts.at(-1)!;
+    check(themesSent.userPrompt.includes("E2E-RAW-WORDS") && themesSent.userPrompt.includes("setup took us months"), "the themes call reads the lead's side of a recent call", themesSent.userPrompt.length);
+    check(!/Zelda|Quill|5550104242|555 010 4242/.test(themesSent.userPrompt) && !themesSent.userPrompt.includes("Hi Zelda"), "the prospect's name, company and phone are redacted, and the rep's side is not read");
+    check(themesSent.trace.name === "linkedin-post-themes", "traced as linkedin-post-themes");
+    check(found.withheld === 1 && found.themes.every((item) => !item.title.includes("Quillfeather")), "a theme naming the prospect's company is dropped", found);
+    check(found.themes.length >= 1 && found.themes.every((item) => item.seal && item.readAt), "the other themes come back sealed, with the time they were read", found.themes.length);
+    const picked: PostTheme = found.themes[0]!;
+
+    const themeDrafts = await runInOrganization(orgA.id, () =>
+      draftPosts({ linkedinAccountId: acc.id, topic: null, knowledgeDocumentIds: [], theme: picked }, deps(["Setup should not take months.", "Zelda Quill told me setup was slow.", "Most teams wait too long to start."])),
+    );
+    const themeSent = prompts.at(-1)!;
+    check(themeSent.userPrompt.includes(picked.summary) && !themeSent.userPrompt.includes("E2E-RAW-WORDS"), "the draft is written from the theme's summary, never the messages");
+    check(themeDrafts.variants.length === 2 && themeDrafts.withheld.length === 1 && themeDrafts.withheld[0]!.matched.includes("Zelda Quill (a name)"), "a draft naming the prospect is withheld, saying what matched", themeDrafts);
+    const themeSource = themeDrafts.source;
+    check(
+      themeSource.kind === "conversations" && themeSource.themeSummary === picked.summary && Boolean(themeSource.seal) && !JSON.stringify(themeSource).includes(person.id) && !JSON.stringify(themeSource).includes(callRow.id),
+      "the source keeps the sealed summary and no message or person id",
+      themeSource,
+    );
+
+    const themePost = await call(a, "POST", "/api/linkedin/posts", { linkedinAccountId: acc.id, body: themeDrafts.variants[0]!.body, source: themeSource, generation: themeDrafts.generation });
+    const themePostId = (themePost.json.post as PostJson)?.id;
+    const [themeRow] = await sql<{ source: Record<string, unknown> }[]>`select source from linkedin_posts where id = ${themePostId ?? null}`;
+    check(themePost.status === 201 && themeRow?.source.kind === "conversations" && !JSON.stringify(themeRow.source).includes(person.id), "a post from a theme is saved with its conversations source", themeRow);
+    const tampered = await call(a, "POST", "/api/linkedin/posts", { linkedinAccountId: acc.id, body: "x", source: { ...themeSource, themeSummary: `${themeSource.themeSummary} (edited)` } });
+    check(tampered.status === 400, "a source whose theme was edited in the browser is refused", tampered.json);
+    const tamperedTheme = await call(a, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: acc.id, theme: { ...picked, readAt: "2020-01-01T00:00:00.000Z" } });
+    check(tamperedTheme.status === 400, "generate refuses a theme whose read time was moved (before the OpenRouter check)", tamperedTheme.json);
+
+    const leaky = await call(a, "PATCH", `/api/linkedin/posts/${themePostId}`, { body: "Setup should not take months. Ask Zelda at Quillfeather Labs, or call 555-010-4242." });
+    check(leaky.status === 200, "an edit is saved as it is (the guard runs at schedule and publish)", leaky.status);
+    const callsBeforeLeak = mockCalls.length;
+    const leakPublish = await call(a, "POST", `/api/linkedin/posts/${themePostId}/publish`);
+    check(leakPublish.status === 409 && String(leakPublish.json.error).includes("Quillfeather Labs (a company)"), "publishing an edited post that names the prospect is refused, saying what matched", leakPublish.json);
+    check(mockCalls.length === callsBeforeLeak, "nothing reached Unipile");
+    const [afterLeak] = await sql<{ status: string }[]>`select status from linkedin_posts where id = ${themePostId}`;
+    check(afterLeak.status === "draft", "the refused post stays a draft", afterLeak);
+    const tomorrow = new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString();
+    const leakSchedule = await call(a, "POST", `/api/linkedin/posts/${themePostId}/schedule`, { date: tomorrow.slice(0, 10), time: "10:00" });
+    check(leakSchedule.status === 409 && String(leakSchedule.json.error).includes("names someone"), "scheduling it is refused too", leakSchedule.json);
+
+    const sticky = await call(a, "PATCH", `/api/linkedin/posts/${themePostId}`, { body: "Setup should not take months.", source: { kind: "topic", topic: "Setup" }, generation: null });
+    const [stickyRow] = await sql<{ source: Record<string, unknown> }[]>`select source from linkedin_posts where id = ${themePostId}`;
+    check(sticky.status === 200 && stickyRow.source.kind === "conversations", "a later topic draft does not take the post out of the guard", stickyRow.source);
+    const cleanSchedule = await call(a, "POST", `/api/linkedin/posts/${themePostId}/schedule`, { date: tomorrow.slice(0, 10), time: "10:00" });
+    check(cleanSchedule.status === 200, "the clean text schedules", cleanSchedule.json);
+    const unscheduled = await call(a, "DELETE", `/api/linkedin/posts/${themePostId}/schedule`);
+    check(unscheduled.status === 200, "and unschedules again", unscheduled.status);
+
+    const rewriteTheme = await runInOrganization(orgA.id, () =>
+      rewritePostDraft({ linkedinAccountId: acc.id, topic: null, knowledgeDocumentIds: [], theme: picked, body: "Setup should not take months.", instruction: "shorter" }, deps(["Zelda Quill: setup is slow."])),
+    );
+    check(rewriteTheme.variants.length === 0 && rewriteTheme.withheld.length === 1 && rewriteTheme.source.kind === "conversations", "a rewrite from a theme is guarded and keeps its source", rewriteTheme);
+
     // ------------------------------------------------------- organization B
     console.log("\nB: a second organization, Unipile connected, one account of its own");
     const stamp = Date.now();
@@ -480,6 +578,17 @@ async function main() {
     await runInOrganization(orgB, () => draftPosts({ linkedinAccountId: accB.id, topic: "B's topic", knowledgeDocumentIds: [] }, deps(["A", "B", "C"])));
     check(prompts.length === promptsBeforeB + 1 && !prompts.at(-1)!.userPrompt.includes("E2E-PUBLIC-MARKER"), "B's own draft runs, and carries none of A's Knowledge");
 
+    // Phase 4: B reads none of A's prospects and cannot use A's theme.
+    const bThemePrompts = themePrompts.length;
+    const bThemes = await runInOrganization(orgB, () => postThemes({ complete: fakeThemes, skipOpenRouterCheck: true }));
+    check(bThemes.read === 0 && bThemes.themes.length === 0 && themePrompts.length === bThemePrompts, "B's themes read none of A's replies or calls (no model call)", bThemes);
+    const bUseTheme = await call(b, "POST", "/api/linkedin/posts/generate", { linkedinAccountId: accB.id, theme: picked });
+    check(bUseTheme.status === 400 && !bUseTheme.text.includes(picked.summary), "B cannot draft from A's theme", bUseTheme.json);
+    const bSaveTheme = await call(b, "POST", "/api/linkedin/posts", { linkedinAccountId: accB.id, body: "x", source: themeSource });
+    check(bSaveTheme.status === 400, "B cannot save a post with A's conversations source", bSaveTheme.json);
+    const bThemesRoute = await call(b, "POST", "/api/linkedin/posts/themes", {});
+    check(bThemesRoute.status === 409, "B's themes route stops at the OpenRouter check", bThemesRoute.json);
+
     // Positive control: B's own draft works and publishes through its own account.
     const own = await call(b, "POST", "/api/linkedin/posts", { linkedinAccountId: accB.id, body: "B's own post" });
     check(own.status === 201, "B creates a draft on its own account", own.json);
@@ -488,6 +597,11 @@ async function main() {
     const listA = await call(a, "GET", "/api/linkedin/posts?pageSize=100");
     check(!listA.text.includes((own.json.post as PostJson).id), "A's list does not show B's post");
   } finally {
+    if (prospect) {
+      await sql`delete from call_sessions where id = ${prospect.callId}`;
+      await sql`delete from people where id = ${prospect.personId}`;
+      await sql`delete from companies where id = ${prospect.companyId}`;
+    }
     if (savedByok) await sql`update grid_providers set config = ${sql.json(savedByok as never)} where organization_id = ${orgA.id} and key = 'openrouter-byok-settings'`;
     if (savedUnipile) await sql`update grid_provider_credentials set encrypted_payload = ${savedUnipile.payload} where provider_id = ${savedUnipile.id}`;
     if (savedR2) await sql`update grid_providers set enabled = ${savedR2.enabled} where organization_id = ${orgA.id} and key = 'platform-r2'`;

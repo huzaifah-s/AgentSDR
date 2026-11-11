@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { RiBuilding2Line, RiCheckboxCircleLine, RiEditLine, RiErrorWarningLine, RiExternalLinkLine, RiHistoryLine, RiLinkedinBoxLine, RiMailLine, RiPhoneLine, RiUserSearchLine } from "@remixicon/react";
+import { RiBuilding2Line, RiCheckboxCircleLine, RiEditLine, RiErrorWarningLine, RiExternalLinkLine, RiHistoryLine, RiLinkedinBoxLine, RiMailLine, RiMailSendLine, RiPhoneLine, RiUserSearchLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Modal from "@/components/alignui/modal";
 import { CallButton } from "@/components/calls/CallButton";
@@ -10,6 +10,7 @@ import { Avatar } from "@/components/calling/callingShared";
 import { errorMessage, formatDate } from "@/components/crm/crm-utils";
 import { Skeleton } from "@/components/page/Skeletons";
 import { PersonWhatsappPanel } from "@/components/whatsapp/PersonWhatsappPanel";
+import { PersonEmailComposer } from "./PersonEmailComposer";
 import { listCalls } from "@/lib/calls/client";
 import type { PersonActivityEvent } from "@/lib/leads/personActivity";
 import { cn } from "@/utils/cn";
@@ -104,6 +105,8 @@ export function PersonDrawer({ row, onClose, onEdit, onChanged }: {
   useEffect(() => { void reload(); }, [reload]);
 
   const changed = () => { void reload(); onChanged?.(); };
+  const [composing, setComposing] = useState(false);
+  const [notice, setNotice] = useState("");
 
   return (
     <Modal.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -146,7 +149,26 @@ export function PersonDrawer({ row, onClose, onEdit, onChanged }: {
           <Section title="Reach out">
             <div className="flex flex-wrap items-center gap-2">
               <CallButton personId={person.id} crmRecordId={crm?.recordId ?? null} phone={person.phone ?? null} onCallStarted={changed} />
+              <Button.Root
+                variant="neutral"
+                mode="stroke"
+                size="xsmall"
+                disabled={!person.email || composing}
+                title={person.email ? undefined : "Add an email address with Edit to send email"}
+                onClick={() => { setComposing(true); setNotice(""); }}
+              >
+                <Button.Icon as={RiMailSendLine} />Send email
+              </Button.Root>
             </div>
+            {notice && <p role="status" className="text-paragraph-xs text-success-base">{notice}</p>}
+            {composing && person.email && (
+              <PersonEmailComposer
+                personId={person.id}
+                to={person.email}
+                onCancel={() => setComposing(false)}
+                onSent={(from) => { setComposing(false); setNotice(from ? `Sent from ${from}.` : "Sent."); changed(); }}
+              />
+            )}
           </Section>
 
           <Section title="WhatsApp">

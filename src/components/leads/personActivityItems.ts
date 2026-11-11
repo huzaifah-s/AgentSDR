@@ -14,6 +14,7 @@ export type PersonActivityItem = {
 };
 
 const EVENT_LABELS: Record<string, string> = {
+  "manual_email.sent": "Email sent",
   "record.created": "CRM record created",
   "reply.received": "Reply received",
   "message.recorded": "Message sent outside AgentSDR",
@@ -48,7 +49,9 @@ function eventItem(event: PersonActivityEvent): PersonActivityItem {
     kind: "event",
     at: text(meta.occurredAt) ?? event.createdAt,
     title: EVENT_LABELS[event.eventType] ?? humanize(event.eventType),
-    detail: text(meta.summary) ?? text(meta.reason) ?? text(meta.error),
+    detail: event.eventType === "manual_email.sent"
+      ? [text(meta.subject) && `“${text(meta.subject)}”`, text(meta.from) && `from ${text(meta.from)}`].filter(Boolean).join(" ") || null
+      : text(meta.summary) ?? text(meta.reason) ?? text(meta.error),
     failed: /failed|error|uncertain/.test(event.eventType),
   };
 }

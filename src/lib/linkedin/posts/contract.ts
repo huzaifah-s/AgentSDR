@@ -70,6 +70,26 @@ export const SYSTEM_PUBLISHER = "system";
 /** The message on a post whose publish ended uncertain. */
 export const UNCERTAIN_PUBLISH_ERROR = "This may have been posted — check LinkedIn before trying again.";
 
+// ------------------------------------------------------------ scheduling (Phase 3)
+
+/** A post is scheduled at least this far ahead. */
+export const MIN_SCHEDULE_LEAD_MS = 5 * 60 * 1000;
+
+/** And at most this far: a year. */
+export const MAX_SCHEDULE_AHEAD_MS = 366 * 24 * 60 * 60 * 1000;
+
+/** A scheduled post more than this late fails ("missed its time") instead of going out. */
+export const MAX_SCHEDULE_LATENESS_MS = 6 * 60 * 60 * 1000;
+
+/** The composer warns when another post on the same account is this close. A warning, not a rule. */
+export const NEARBY_POST_WARNING_MS = 4 * 60 * 60 * 1000;
+
+/** The start of the error on a scheduled post the job failed for being too late. */
+export const MISSED_TIME_ERROR = "This post missed its time";
+
+/** One of the account's other posts, for the composer's "another post within 4 hours" warning. */
+export type PostTime = { id: string; at: string; status: "scheduled" | "published" | "publishing" };
+
 export type LinkedinPostAccount = {
   id: string;
   name: string | null;
@@ -91,8 +111,11 @@ export type LinkedinPostView = {
   /** The AI draft it started from, if any. */
   generation: LinkedinPostGeneration | null;
   scheduledAt: string | null;
+  /** For a scheduled post: why it is not going out at its time, if anything is in the way. */
+  waiting: string | null;
   publishedAt: string | null;
   postUrl: string | null;
+  /** Why it failed; on a scheduled post, a note from the scheduler (moved to the next day). */
   error: string | null;
   createdBy: { id: string; name: string | null } | null;
   publishedBy: { id: string; name: string | null } | null;

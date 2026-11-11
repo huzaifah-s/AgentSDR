@@ -31,6 +31,9 @@ describe("People migration operational controls", () => {
     expect(isMigrationControlPaused("linkedinOutbound", env)).toBe(true);
     expect(isMigrationControlPaused("linkedinResolution", env)).toBe(false);
     expect(isMigrationControlPaused("emailOutbound", env)).toBe(false);
+    expect(isMigrationControlPaused("linkedinPosts", env)).toBe(false);
+    expect(isMigrationControlPaused("linkedinPosts", { PAUSE_LINKEDIN_POSTS: "true" })).toBe(true);
+    expect(isMigrationControlPaused("linkedinPosts", { PEOPLE_MIGRATION_MODE: "true" })).toBe(true);
   });
 
   test("migration mode blocks campaign mutations but preserves webhooks", () => {

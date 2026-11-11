@@ -22,6 +22,7 @@ import { useDialogs } from "@/components/DialogProvider";
 import { LinkedInAccountTag } from "@/components/linkedin/LinkedInAccountTag";
 import { PageHeader } from "@/components/page/PageHeader";
 import { PostAiPanel } from "./PostAiPanel";
+import { formatInZone, PostSchedulePanel } from "./PostSchedulePanel";
 import {
   EDITABLE_STATUSES,
   feedPreview,
@@ -35,6 +36,7 @@ import {
   type LinkedinPostView,
   type PostDraftsResponse,
   type PostKnowledgeOption,
+  type PostTime,
 } from "@/lib/linkedin/posts/contract";
 import type { PostOrigin } from "@/lib/linkedin/posts/requests";
 import { cn } from "@/utils/cn";
@@ -49,6 +51,10 @@ type Props = {
   r2SettingsLabel: string;
   postsPerDay: number;
   publishedToday: Record<string, number>;
+  /** The organization's time zone: scheduled times are chosen and shown in it. */
+  timeZone: string;
+  /** Each account's scheduled and recently published posts, for the "within 4 hours" warning. */
+  postTimes: Record<string, PostTime[]>;
   /** OpenRouter is connected: the composer shows "Write with AI". */
   aiReady: boolean;
   knowledge: PostKnowledgeOption[];
@@ -79,7 +85,7 @@ function imageSize(file: File): Promise<{ width: number; height: number } | null
   });
 }
 
-export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsLabel, postsPerDay, publishedToday, aiReady, knowledge }: Props) {
+export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsLabel, postsPerDay, publishedToday, timeZone, postTimes, aiReady, knowledge }: Props) {
   const router = useRouter();
   const dialogs = useDialogs();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -87,7 +93,7 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
   const [post, setPost] = useState<LinkedinPostView | null>(initial);
   const [accountId, setAccountId] = useState(initial?.account?.id ?? accounts.find((a) => a.status === "CONNECTED")?.id ?? "");
   const [body, setBody] = useState(initial?.body ?? "");
-  const [busy, setBusy] = useState<"save" | "publish" | "image" | "delete" | null>(null);
+  const [busy, setBusy] = useState<"save" | "publish" | "schedule" | "image" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** An AI draft the rep used, recorded on the post at the next save. */
@@ -145,8 +151,30 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
 
   const onSave = () =>
     run("save", async () => {
-      await save();
-      setNotice("Draft saved.");
+      const saved = await save();
+      setNotice(saved.status === "scheduled" ? "Saved. It stays scheduled." : "Draft saved.");
+      router.refresh();
+    });
+
+  const onSchedule = (date: string, time: string) =>
+    run("schedule", async () => {
+      const saved = await save();
+      const { post: after } = await api<{ post: LinkedinPostView }>(`/api/linkedin/posts/${saved.id}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date, time }),
+      });
+      setPost(after);
+      setNotice(`Scheduled for ${formatInZone(after.scheduledAt!, timeZone)}.`);
+      router.refresh();
+    });
+
+  const onUnschedule = () =>
+    run("schedule", async () => {
+      if (!post) return;
+      const { post: after } = await api<{ post: LinkedinPostView }>(`/api/linkedin/posts/${post.id}/schedule`, { method: "DELETE" });
+      setPost(after);
+      setNotice("Unscheduled. It is a draft again.");
       router.refresh();
     });
 
@@ -238,6 +266,8 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
   const images = post?.attachments ?? [];
   const connectedAccounts = accounts.filter((a) => a.status === "CONNECTED");
   const canPublish = !readOnly && !busy && Boolean(account) && account?.status === "CONNECTED" && body.trim().length > 0 && !tooLong && !atLimit;
+  const canSchedule = !readOnly && Boolean(account) && account?.status === "CONNECTED" && body.trim().length > 0 && !tooLong;
+  const isScheduled = post?.status === "scheduled";
 
   return (
     <div className="mx-auto w-full max-w-[1200px]">
@@ -251,6 +281,8 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
             <Badge.Root variant="lighter" color="blue" size="small">Publishing…</Badge.Root>
           ) : post?.status === "failed" ? (
             <Badge.Root variant="lighter" color="red" size="small">Failed</Badge.Root>
+          ) : post?.status === "scheduled" ? (
+            <Badge.Root variant="lighter" color="purple" size="small">Scheduled</Badge.Root>
           ) : post ? (
             <Badge.Root variant="lighter" color="gray" size="small">Draft</Badge.Root>
           ) : null
@@ -280,7 +312,7 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
               </Button.Root>
               <Button.Root variant="neutral" mode="stroke" size="small" onClick={onSave} disabled={Boolean(busy) || !accountId || tooLong || (!dirty && post?.status !== "failed")}>
                 <Button.Icon as={busy === "save" ? RiLoader4Line : RiSave3Line} className={cn(busy === "save" && "animate-spin")} />
-                Save draft
+                {isScheduled ? "Save" : "Save draft"}
               </Button.Root>
               <Button.Root variant="primary" mode="filled" size="small" onClick={onPublish} disabled={!canPublish}>
                 <Button.Icon as={busy === "publish" ? RiLoader4Line : RiSendPlaneLine} className={cn(busy === "publish" && "animate-spin")} />
@@ -303,6 +335,15 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
                   : "Edit the post or save it as a draft, then publish again."}
               </p>
             )}
+          </div>
+        </div>
+      )}
+      {isScheduled && (post?.waiting || post?.error) && (
+        <div role="status" className="mt-5 flex gap-2 rounded-xl bg-warning-lighter px-4 py-3 text-paragraph-sm text-warning-dark">
+          <RiErrorWarningLine className="mt-0.5 size-4 shrink-0" />
+          <div className="space-y-1">
+            {post?.waiting && <p>{post.waiting}</p>}
+            {post?.error && <p>{post.error}</p>}
           </div>
         </div>
       )}
@@ -442,6 +483,20 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
               knowledge={knowledge}
               disabled={Boolean(busy)}
               onUse={onUseDraft}
+            />
+          )}
+          {!readOnly && (
+            <PostSchedulePanel
+              key={post?.scheduledAt ?? "unscheduled"}
+              post={post}
+              timeZone={timeZone}
+              accountName={accountName(account)}
+              otherPosts={account ? postTimes[account.id] ?? [] : []}
+              disabled={Boolean(busy)}
+              busy={busy === "schedule"}
+              canSchedule={canSchedule}
+              onSchedule={onSchedule}
+              onUnschedule={onUnschedule}
             />
           )}
           <Frame>

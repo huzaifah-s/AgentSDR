@@ -1,11 +1,12 @@
 import "server-only";
 
-import { aliasedTable, and, asc, count, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { aliasedTable, and, asc, count, desc, eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { channelRules } from "@/lib/channels/rules.server";
 import { users } from "@/lib/auth/schema";
 import { crmKnowledgeDocuments } from "@/lib/crm/schema";
 import { linkedInAccounts } from "@/lib/linkedin/schema";
-import { isPlatformNotConnectedError } from "@/lib/platform/credentials";
+import { isPlatformConnected, isPlatformNotConnectedError } from "@/lib/platform/credentials";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import {
   attachmentImageId,
@@ -15,9 +16,12 @@ import {
   type LinkedinPostAttachment,
   type LinkedinPostStatus,
   type LinkedinPostView,
+  type PostTime,
+  NEARBY_POST_WARNING_MS,
 } from "./contract";
-import { failStalePublishingPosts } from "./publish";
-import type { CreatePostInput, ImageUpload, ListQuery, PostOrigin, UpdatePostInput } from "./requests";
+import { failStalePublishingPosts, publishedTodayByAccount } from "./publish";
+import type { CreatePostInput, ImageUpload, ListQuery, PostOrigin, SchedulePostInput, UpdatePostInput } from "./requests";
+import { nextOrganizationDayStart, scheduledWaitReason, scheduleInstant, scheduleRefusal } from "./scheduleRules";
 import { linkedinPosts, type LinkedinPostRow } from "./schema";
 import { deletePostImages, postImageFile, postImageKey, putPostImage } from "./storage";
 
@@ -49,7 +53,10 @@ const ACCOUNT_COLUMNS = {
   status: linkedInAccounts.status,
 };
 
-async function selectViews(where: SQL | undefined, limit?: { limit: number; offset: number }): Promise<LinkedinPostView[]> {
+/** Newest first, or for scheduled posts, soonest first. */
+type ViewOrder = "recent" | "soonest";
+
+async function selectViews(where: SQL | undefined, limit?: { limit: number; offset: number }, order: ViewOrder = "recent"): Promise<LinkedinPostView[]> {
   const query = db
     .select({
       post: linkedinPosts,
@@ -63,10 +70,45 @@ async function selectViews(where: SQL | undefined, limit?: { limit: number; offs
     .leftJoin(creator, sql`${creator.id}::text = ${linkedinPosts.createdBy}`)
     .leftJoin(publisher, sql`${publisher.id}::text = ${linkedinPosts.publishedBy}`)
     .where(and(inOrg(linkedinPosts), where))
-    .orderBy(desc(sql`coalesce(${linkedinPosts.publishedAt}, ${linkedinPosts.updatedAt})`), desc(linkedinPosts.id));
+    .orderBy(
+      ...(order === "soonest"
+        ? [asc(linkedinPosts.scheduledAt), asc(linkedinPosts.id)]
+        : [desc(sql`coalesce(${linkedinPosts.publishedAt}, ${linkedinPosts.updatedAt})`), desc(linkedinPosts.id)]),
+    );
   const rows = limit ? await query.limit(limit.limit).offset(limit.offset) : await query;
-  return rows.map(({ post, account, creatorName, publisherName }) =>
-    toView(post, account?.id ? (account as LinkedinPostAccount) : null, creatorName, publisherName),
+  return withWaiting(
+    rows.map(({ post, account, creatorName, publisherName }) => toView(post, account?.id ? (account as LinkedinPostAccount) : null, creatorName, publisherName)),
+  );
+}
+
+/**
+ * Fill in why each scheduled post is waiting (scheduleRules.scheduledWaitReason).
+ * Reads the rules and today's counts only when there is a scheduled post.
+ */
+async function withWaiting(views: LinkedinPostView[]): Promise<LinkedinPostView[]> {
+  if (!views.some((view) => view.status === "scheduled")) return views;
+  const now = new Date();
+  const [unipileConnected, { postsPerDay }, general, publishedToday] = await Promise.all([
+    isPlatformConnected("unipile"),
+    channelRules("linkedin"),
+    channelRules("general"),
+    publishedTodayByAccount(now),
+  ]);
+  const nextDayStart = nextOrganizationDayStart(general.timeZone, general.dayStartsAt, now);
+  return views.map((view) =>
+    view.status !== "scheduled" || !view.scheduledAt
+      ? view
+      : {
+          ...view,
+          waiting: scheduledWaitReason({
+            unipileConnected,
+            account: view.account ? { status: view.account.status, name: view.account.name || view.account.username } : null,
+            scheduledAt: new Date(view.scheduledAt),
+            publishedToday: view.account ? publishedToday[view.account.id] ?? 0 : 0,
+            postsPerDay,
+            nextDayStart,
+          }),
+        },
   );
 }
 
@@ -80,6 +122,7 @@ function toView(post: LinkedinPostRow, account: LinkedinPostAccount | null, crea
     source: post.source ?? null,
     generation: post.generation ?? null,
     scheduledAt: post.scheduledAt?.toISOString() ?? null,
+    waiting: null,
     publishedAt: post.publishedAt?.toISOString() ?? null,
     postUrl: post.postUrl,
     error: post.error,
@@ -90,26 +133,74 @@ function toView(post: LinkedinPostRow, account: LinkedinPostAccount | null, crea
   };
 }
 
-export async function listPosts(query: ListQuery): Promise<{ posts: LinkedinPostView[]; total: number; counts: Record<LinkedinPostStatus, number> }> {
-  // Until the Phase 3 job exists, reading the list is what retires a post a
-  // crashed process left in `publishing`.
+export async function listPosts(
+  query: ListQuery,
+): Promise<{ posts: LinkedinPostView[]; total: number; counts: Record<LinkedinPostStatus, number>; upcoming: LinkedinPostView[] }> {
+  // The scheduled-posts job also retires a post a crashed process left in
+  // `publishing`; reading the list does it too, so it never waits on the job.
   await failStalePublishingPosts();
   const filters = and(
     query.statuses ? inArray(linkedinPosts.status, query.statuses) : undefined,
     query.linkedinAccountId ? eq(linkedinPosts.linkedinAccountId, query.linkedinAccountId) : undefined,
   );
-  const [posts, totals] = await Promise.all([
-    selectViews(filters, { limit: query.pageSize, offset: (query.page - 1) * query.pageSize }),
+  const onlyScheduled = query.statuses?.length === 1 && query.statuses[0] === "scheduled";
+  const [posts, totals, upcoming] = await Promise.all([
+    selectViews(filters, { limit: query.pageSize, offset: (query.page - 1) * query.pageSize }, onlyScheduled ? "soonest" : "recent"),
     db
       .select({ status: linkedinPosts.status, n: count() })
       .from(linkedinPosts)
       .where(and(inOrg(linkedinPosts), query.linkedinAccountId ? eq(linkedinPosts.linkedinAccountId, query.linkedinAccountId) : undefined))
       .groupBy(linkedinPosts.status),
+    nextScheduledPerAccount(),
   ]);
   const counts: Record<LinkedinPostStatus, number> = { draft: 0, scheduled: 0, publishing: 0, published: 0, failed: 0 };
   for (const row of totals) counts[row.status] = row.n;
   const total = query.statuses ? query.statuses.reduce((sum, status) => sum + counts[status], 0) : Object.values(counts).reduce((a, b) => a + b, 0);
-  return { posts, total, counts };
+  return { posts, total, counts, upcoming };
+}
+
+/** Each account's next scheduled post, soonest first: the list's "Coming up". */
+export async function nextScheduledPerAccount(): Promise<LinkedinPostView[]> {
+  const next = await db
+    .selectDistinctOn([linkedinPosts.linkedinAccountId], { id: linkedinPosts.id })
+    .from(linkedinPosts)
+    .where(and(inOrg(linkedinPosts), eq(linkedinPosts.status, "scheduled")))
+    .orderBy(linkedinPosts.linkedinAccountId, asc(linkedinPosts.scheduledAt), asc(linkedinPosts.id));
+  if (!next.length) return [];
+  return selectViews(inArray(linkedinPosts.id, next.map((row) => row.id)), undefined, "soonest");
+}
+
+/**
+ * Each account's scheduled posts and the ones published in the last 4
+ * hours, for the composer's "another post within 4 hours" warning.
+ */
+export async function postTimesByAccount(now: Date = new Date()): Promise<Record<string, PostTime[]>> {
+  const since = new Date(now.getTime() - NEARBY_POST_WARNING_MS);
+  const rows = await db
+    .select({
+      id: linkedinPosts.id,
+      accountId: linkedinPosts.linkedinAccountId,
+      status: linkedinPosts.status,
+      at: sql<Date>`coalesce(${linkedinPosts.publishedAt}, ${linkedinPosts.scheduledAt}, ${linkedinPosts.updatedAt})`.mapWith((value) => new Date(value)),
+    })
+    .from(linkedinPosts)
+    .where(
+      and(
+        inOrg(linkedinPosts),
+        or(
+          eq(linkedinPosts.status, "scheduled"),
+          eq(linkedinPosts.status, "publishing"),
+          and(eq(linkedinPosts.status, "published"), gte(linkedinPosts.publishedAt, since)),
+        ),
+      ),
+    )
+    .orderBy(asc(linkedinPosts.scheduledAt))
+    .limit(2000);
+  const byAccount: Record<string, PostTime[]> = {};
+  for (const row of rows) {
+    (byAccount[row.accountId] ??= []).push({ id: row.id, at: row.at.toISOString(), status: row.status as PostTime["status"] });
+  }
+  return byAccount;
 }
 
 export async function getPost(postId: string): Promise<LinkedinPostView> {
@@ -187,6 +278,10 @@ export async function updatePost(postId: string, input: UpdatePostInput): Promis
       .for("update");
     if (!post) throw notFound();
     if (!EDITABLE_STATUSES.includes(post.status)) throw editableError(post.status);
+    // Editing keeps a scheduled post scheduled, so it must stay publishable.
+    if (post.status === "scheduled" && input.body !== undefined && !input.body.trim()) {
+      throw new PostApiError(400, "A scheduled post needs text. Unschedule it to keep it as an empty draft.");
+    }
     const nextStatus: LinkedinPostStatus = post.status === "failed" ? "draft" : post.status;
     return tx
       .update(linkedinPosts)
@@ -202,6 +297,52 @@ export async function updatePost(postId: string, input: UpdatePostInput): Promis
       .returning({ id: linkedinPosts.id });
   });
   if (!updated.length) throw notFound();
+  return getPost(postId);
+}
+
+/**
+ * Schedule a draft, or move a scheduled post, to a date and time read in the
+ * organization's time zone. Clears a note the scheduler left (moved to the
+ * next day), since the person chose a new time.
+ */
+export async function schedulePost(postId: string, input: SchedulePostInput, now: Date = new Date()): Promise<LinkedinPostView> {
+  const { timeZone } = await channelRules("general");
+  const scheduledAt = scheduleInstant(timeZone, input.date, input.time);
+  if (!scheduledAt) throw new PostApiError(400, "That date does not exist.");
+  await db.transaction(async (tx) => {
+    const [post] = await tx
+      .select({ status: linkedinPosts.status, body: linkedinPosts.body })
+      .from(linkedinPosts)
+      .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)))
+      .for("update");
+    if (!post) throw notFound();
+    const refusal = scheduleRefusal({ status: post.status, body: post.body, scheduledAt, now });
+    if (refusal) throw new PostApiError(refusal.status, refusal.message);
+    await tx
+      .update(linkedinPosts)
+      .set({ status: "scheduled", scheduledAt, error: null, updatedAt: now })
+      .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)));
+  });
+  return getPost(postId);
+}
+
+/** Put a scheduled post back to a draft. */
+export async function unschedulePost(postId: string): Promise<LinkedinPostView> {
+  await db.transaction(async (tx) => {
+    const [post] = await tx
+      .select({ status: linkedinPosts.status })
+      .from(linkedinPosts)
+      .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)))
+      .for("update");
+    if (!post) throw notFound();
+    if (post.status !== "scheduled") {
+      throw post.status === "publishing" || post.status === "published" ? editableError(post.status) : new PostApiError(409, "This post is not scheduled.");
+    }
+    await tx
+      .update(linkedinPosts)
+      .set({ status: "draft", scheduledAt: null, error: null, updatedAt: new Date() })
+      .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)));
+  });
   return getPost(postId);
 }
 

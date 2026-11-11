@@ -73,18 +73,27 @@ export async function publishedTodayByAccount(now: Date = new Date()): Promise<R
   return Object.fromEntries(rows.map((row) => [row.accountId, row.n]));
 }
 
-/** Step 1: lock the post, check it may go out now, and mark it `publishing`. */
-async function claim(postId: string, publishedBy: string, now: Date): Promise<Claimed> {
+/**
+ * Step 1: lock the post, check it may go out now, and mark it `publishing`.
+ *
+ * `scheduled` is the job's claim: the post must still be `scheduled` and due
+ * (a person may have unscheduled or moved it since the job found it), and a
+ * row someone else holds locked right now is skipped, not waited for.
+ */
+async function claim(postId: string, publishedBy: string, now: Date, scheduled: boolean): Promise<Claimed> {
   const { postsPerDay } = await channelRules("linkedin");
   const dayStart = await organizationDayStart(now);
 
   return db.transaction(async (tx) => {
-    const [post] = await tx
+    const select = tx
       .select()
       .from(linkedinPosts)
-      .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)))
-      .for("update");
+      .where(and(inOrg(linkedinPosts), eq(linkedinPosts.id, postId)));
+    const [post] = scheduled ? await select.for("update", { skipLocked: true }) : await select.for("update");
     if (!post) throw new PostPublishRefusedError({ status: 404, message: "Post not found" });
+    if (scheduled && (post.status !== "scheduled" || !post.scheduledAt || post.scheduledAt > now)) {
+      throw new PostPublishRefusedError({ status: 409, message: "This post is no longer due.", reason: "not-due" });
+    }
 
     // One account's publishes go one at a time, so two posts cannot both
     // pass the daily limit by counting before either is claimed.
@@ -133,15 +142,19 @@ async function settle(postId: string, values: Partial<typeof linkedinPosts.$infe
 }
 
 /**
- * Publish a post now, in the organization in scope. Throws
+ * Publish a post now, in the organization in scope (`scheduled`: the job
+ * publishing a due scheduled post, see claim). Throws
  * PostPublishRefusedError (nothing changed) when it may not go out, and
  * PlatformNotConnectedError when Unipile is not connected. Otherwise returns
  * how it ended; a failure is recorded on the post.
  */
-export async function publishPost(postId: string, { publishedBy, now = new Date() }: { publishedBy: string; now?: Date }): Promise<PublishOutcome> {
+export async function publishPost(
+  postId: string,
+  { publishedBy, now = new Date(), scheduled = false }: { publishedBy: string; now?: Date; scheduled?: boolean },
+): Promise<PublishOutcome> {
   // Before the claim, so a missing integration leaves the post untouched.
   await requirePlatformCredentials("unipile");
-  const claimed = await claim(postId, publishedBy, now);
+  const claimed = await claim(postId, publishedBy, now, scheduled);
 
   // Step 2: the images. Nothing has gone to LinkedIn yet, so a failure here
   // puts the post back as it was, with the reason.

@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { pruneJobHistory } from "@/jobs/resetDailyLimits";
+import { publishScheduledLinkedinPosts } from "@/jobs/publishLinkedinPosts";
 import { replayLinkedinWebhooks } from "@/jobs/replayLinkedinWebhooks";
 import { runOutreach } from "@/jobs/runOutreach";
 import { runSearchQueue } from "@/jobs/runSearchQueue";
@@ -53,6 +54,10 @@ export async function startPlatformJob(name: PlatformJobName): Promise<StartedJo
         summary = await replayLinkedinWebhooks(100, undefined);
       });
       return { body: { ok: true, runId, summary }, done };
+    }
+    case "linkedin-publish-posts": {
+      const summary = await publishScheduledLinkedinPosts();
+      return { body: { ok: true, summary }, done: finished };
     }
     case "crm-auto-follow-ups": {
       const summary = await runCrmAutoFollowUps();

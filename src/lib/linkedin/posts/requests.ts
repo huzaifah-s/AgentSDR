@@ -267,3 +267,18 @@ export function validateImageUpload(input: {
 export function isImageId(value: string): boolean {
   return UUID_PATTERN.test(value);
 }
+
+export type SchedulePostInput = { date: string; time: string };
+
+/**
+ * POST /[id]/schedule — `{ date: "YYYY-MM-DD", time: "HH:MM" }`, read in the
+ * organization's time zone by the server (scheduleRules.scheduleInstant), so
+ * the browser's own zone never matters.
+ */
+export function parseSchedulePost(input: unknown): Parsed<SchedulePostInput> {
+  const object = asObject(input);
+  if (!object) return fail("Expected a JSON object");
+  if (typeof object.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(object.date)) return fail("Choose a date");
+  if (typeof object.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(object.time)) return fail("Choose a time");
+  return ok({ date: object.date, time: object.time });
+}

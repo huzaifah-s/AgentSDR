@@ -19,6 +19,7 @@ export type PlatformJobName =
   | "linkedin-run-outreach"
   | "linkedin-run-search-queue"
   | "linkedin-replay-webhooks"
+  | "linkedin-publish-posts"
   | "crm-auto-follow-ups"
   | "email-imap-sync"
   | "history-prune";
@@ -60,6 +61,16 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     enabled: true,
     endpoint: "/api/linkedin/jobs/replay-webhooks",
     description: "Retry LinkedIn webhook deliveries that failed",
+  },
+  {
+    // Scheduled LinkedIn posts: at most one per account per run; the daily
+    // limit (Sending rules, postsPerDay) moves a post to the next day.
+    // PAUSE_LINKEDIN_POSTS stops it.
+    name: "linkedin-publish-posts",
+    schedule: everyMinutes(2),
+    enabled: true,
+    endpoint: "/api/linkedin/jobs/publish-posts",
+    description: "Publish scheduled LinkedIn posts that are due (one per account per run)",
   },
   {
     // Each run sends at most one follow-up per sending account; the

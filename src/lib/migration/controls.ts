@@ -21,7 +21,8 @@ export type MigrationControl =
   | "linkedinResolution"
   | "linkedinSearch"
   | "gridWorker"
-  | "aiCalling";
+  | "aiCalling"
+  | "linkedinPosts";
 
 const CONTROL_ENV: Record<MigrationControl, string> = {
   emailOutbound: "PAUSE_EMAIL_OUTBOUND",
@@ -34,6 +35,8 @@ const CONTROL_ENV: Record<MigrationControl, string> = {
   gridWorker: "PAUSE_GRID_WORKER",
   /** AI calling campaigns (src/lib/calls/aiCampaigns/engine.ts): no new calls or messages; open ones still settle. */
   aiCalling: "PAUSE_AI_CALLING",
+  /** Scheduled LinkedIn posts (src/jobs/publishLinkedinPosts.ts): they wait; Publish now still works. */
+  linkedinPosts: "PAUSE_LINKEDIN_POSTS",
 };
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);

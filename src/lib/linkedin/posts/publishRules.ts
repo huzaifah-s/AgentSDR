@@ -17,6 +17,12 @@ export type PublishRefusal = {
   /** HTTP status the route answers with. */
   status: 400 | 404 | 409 | 429;
   message: string;
+  /**
+   * What the scheduled-posts job acts on: `daily-limit` moves the post to the
+   * next day, `account` leaves it waiting, `not-due` means a person changed it
+   * since the job found it. Absent for refusals the job just records.
+   */
+  reason?: "daily-limit" | "account" | "not-due";
 };
 
 /**
@@ -41,15 +47,16 @@ export function publishRefusal(input: {
     return { status: 400, message: `A post can be at most ${MAX_POST_LENGTH.toLocaleString("en-US")} characters.` };
   }
   if (input.attachmentCount > MAX_POST_IMAGES) return { status: 400, message: `A post can have at most ${MAX_POST_IMAGES} images.` };
-  if (!input.account) return { status: 409, message: "This post's LinkedIn account is no longer connected to your organization." };
+  if (!input.account) return { status: 409, message: "This post's LinkedIn account is no longer connected to your organization.", reason: "account" };
   if (input.account.status !== "CONNECTED") {
-    return { status: 409, message: `${input.account.name}'s LinkedIn account is disconnected. Reconnect it in Settings → LinkedIn accounts.` };
+    return { status: 409, message: `${input.account.name}'s LinkedIn account is disconnected. Reconnect it in Settings → LinkedIn accounts.`, reason: "account" };
   }
   if (input.publishedToday >= input.postsPerDay) {
     const limit = input.postsPerDay === 1 ? "1 post" : `${input.postsPerDay} posts`;
     return {
       status: 429,
       message: `${input.account.name} has already published ${limit} today, the limit in Settings → LinkedIn → Sending rules.`,
+      reason: "daily-limit",
     };
   }
   return null;

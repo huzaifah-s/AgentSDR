@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { RiAddLine, RiArrowLeftSLine, RiArrowRightSLine, RiExternalLinkLine, RiFileTextLine, RiImageLine } from "@remixicon/react";
+import { RiAddLine, RiArrowLeftSLine, RiArrowRightSLine, RiErrorWarningLine, RiExternalLinkLine, RiFileTextLine, RiImageLine } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
 import * as Button from "@/components/alignui/button";
 import * as Table from "@/components/alignui/table";
@@ -13,10 +13,11 @@ import { PageHeader } from "@/components/page/PageHeader";
 import { PageTabs } from "@/components/page/PageTabs";
 import { firstLine, POST_TABS, type LinkedinPostStatus, type LinkedinPostView, type PostTab } from "@/lib/linkedin/posts/contract";
 import { cn } from "@/utils/cn";
+import { formatInZone } from "./PostSchedulePanel";
 
 const EMPTY: Record<PostTab, { title: string; description: string }> = {
   drafts: { title: "No drafts", description: "Write a post and save it as a draft to come back to it." },
-  scheduled: { title: "Nothing scheduled", description: "Scheduling posts for later is coming soon. For now, publish a post when it is ready." },
+  scheduled: { title: "Nothing scheduled", description: "Open a draft and choose a date and time under Schedule. It goes out on its own, one post per account at a time." },
   published: { title: "Nothing published yet", description: "Posts you publish from AgentSDR show here, with a link to each on LinkedIn." },
   failed: { title: "No failed posts", description: "A post LinkedIn refused, or one whose publish could not be confirmed, shows here." },
 };
@@ -25,10 +26,6 @@ function when(post: LinkedinPostView): { label: string; iso: string } {
   if (post.publishedAt) return { label: "Published", iso: post.publishedAt };
   if (post.scheduledAt && post.status === "scheduled") return { label: "Scheduled for", iso: post.scheduledAt };
   return { label: "Edited", iso: post.updatedAt };
-}
-
-function formatWhen(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function StatusBadge({ status }: { status: LinkedinPostStatus }) {
@@ -42,6 +39,8 @@ export function PostsClient({
   posts,
   total,
   counts,
+  upcoming,
+  timeZone,
   page,
   pageSize,
 }: {
@@ -49,9 +48,14 @@ export function PostsClient({
   posts: LinkedinPostView[];
   total: number;
   counts: Record<LinkedinPostStatus, number>;
+  /** Each account's next scheduled post. */
+  upcoming: LinkedinPostView[];
+  /** The organization's time zone: every time on the page is shown in it. */
+  timeZone: string;
   page: number;
   pageSize: number;
 }) {
+  const formatWhen = (iso: string) => formatInZone(iso, timeZone);
   const router = useRouter();
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const tabs = POST_TABS.map((t) => ({ value: t.value, label: t.label, count: t.statuses.reduce((sum, s) => sum + counts[s], 0) }));
@@ -74,12 +78,47 @@ export function PostsClient({
         actions={newPost}
       />
 
+      {upcoming.length > 0 && (
+        <Frame className="mt-6">
+          <FrameHeader title="Coming up" description={`Each account's next scheduled post. Times are in ${timeZone.replace(/_/g, " ")}.`} />
+          <FramePanel className="p-2 sm:p-2">
+            <ul className="divide-y divide-stroke-soft-200">
+              {upcoming.map((post) => (
+                <li key={post.id}>
+                  <Link href={`/linkedin/posts/${post.id}`} className="flex flex-col gap-1 rounded-lg px-3 py-2.5 hover:bg-bg-weak-50 sm:flex-row sm:items-center sm:gap-4">
+                    <span className="w-48 shrink-0">{post.account ? <LinkedInAccountTag account={post.account} /> : <span className="text-paragraph-xs text-text-soft-400">Account removed</span>}</span>
+                    <time dateTime={post.scheduledAt ?? undefined} className="w-44 shrink-0 text-label-xs text-text-strong-950">
+                      {post.scheduledAt ? formatWhen(post.scheduledAt) : ""}
+                    </time>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-paragraph-sm text-text-sub-600">{firstLine(post.body)}</span>
+                      {post.waiting && (
+                        <span className="mt-0.5 flex items-center gap-1 text-paragraph-xs text-warning-base">
+                          <RiErrorWarningLine className="size-3.5 shrink-0" />
+                          <span className="truncate">{post.waiting}</span>
+                        </span>
+                      )}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </FramePanel>
+        </Frame>
+      )}
+
       <PageTabs className="mt-6" label="Posts" tabs={tabs} value={tab} onChange={(next) => router.push(href(next))} />
 
       <Frame className="mt-5">
         <FrameHeader
           title={POST_TABS.find((t) => t.value === tab)?.label ?? "Posts"}
-          description={tab === "published" ? "Newest first. Open one on LinkedIn from its link." : "Newest first. Select a post to edit or publish it."}
+          description={
+            tab === "published"
+              ? "Newest first. Open one on LinkedIn from its link."
+              : tab === "scheduled"
+                ? "Soonest first. Select a post to edit, move or unschedule it."
+                : "Newest first. Select a post to edit or publish it."
+          }
         />
         <FramePanel className="overflow-x-auto p-2 sm:p-2">
           {posts.length === 0 ? (
@@ -122,6 +161,11 @@ export function PostsClient({
                           )}
                         </div>
                         {post.status === "failed" && post.error && <p className="mt-0.5 truncate text-paragraph-xs text-error-base">{post.error}</p>}
+                        {post.status === "scheduled" && (post.waiting || post.error) && (
+                          <p className="mt-0.5 truncate text-paragraph-xs text-warning-base" title={[post.waiting, post.error].filter(Boolean).join(" ")}>
+                            {post.waiting ?? post.error}
+                          </p>
+                        )}
                       </Table.Cell>
                       <Table.Cell className="px-4 text-paragraph-xs text-text-sub-600">
                         <span className="text-text-soft-400">{time.label}</span> <time dateTime={time.iso}>{formatWhen(time.iso)}</time>

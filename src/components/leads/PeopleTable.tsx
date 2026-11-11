@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { RiEditLine, RiExternalLinkLine, RiFileCopyLine, RiMore2Line, RiPhoneLine, RiUserSearchLine } from "@remixicon/react";
+import { RiEditLine, RiExternalLinkLine, RiFileCopyLine, RiMore2Line, RiPhoneLine, RiSidebarUnfoldLine, RiUserSearchLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Table from "@/components/alignui/table";
@@ -31,19 +31,21 @@ function SkeletonRow({ index }: { index: number }) {
   );
 }
 
-function PersonTableRow({ row, onEdit }: { row: PersonRow; onEdit?: (row: PersonRow) => void }) {
+function PersonTableRow({ row, onEdit, onOpen }: { row: PersonRow; onEdit?: (row: PersonRow) => void; onOpen?: (row: PersonRow) => void }) {
   const router = useRouter();
   const { person, company, campaigns, crm } = row;
   const href = crm ? `/crm/records/${crm.recordId}` : null;
   const name = person.fullName || "Unnamed person";
   const companyName = company ? company.name || company.domain : null;
+  // A person with a CRM record opens the record; anyone else opens the person drawer.
+  const open = href ? () => router.push(href) : onOpen ? () => onOpen(row) : null;
   return (
     <Table.Row
-      tabIndex={href ? 0 : undefined}
-      aria-label={href ? `Open ${name}` : undefined}
-      onClick={href ? () => router.push(href) : undefined}
-      onKeyDown={href ? (event) => { if (event.target === event.currentTarget && event.key === "Enter") router.push(href); } : undefined}
-      className={cn("outline-none focus-visible:[&>td]:bg-bg-weak-50", href && "cursor-pointer")}
+      tabIndex={open ? 0 : undefined}
+      aria-label={open ? `Open ${name}` : undefined}
+      onClick={open ?? undefined}
+      onKeyDown={open ? (event) => { if (event.target === event.currentTarget && event.key === "Enter") open(); } : undefined}
+      className={cn("outline-none focus-visible:[&>td]:bg-bg-weak-50", open && "cursor-pointer")}
     >
       <Table.Cell className={rowCell}>
         <div className="flex min-w-0 items-center gap-3">
@@ -73,12 +75,13 @@ function PersonTableRow({ row, onEdit }: { row: PersonRow; onEdit?: (row: Person
               <Button.Root variant="neutral" mode="ghost" size="xsmall" aria-label={`More actions for ${name}`}><Button.Icon as={RiMore2Line} /></Button.Root>
             </Dropdown.Trigger>
             <Dropdown.Content>
+              {onOpen && <Dropdown.Item onSelect={() => onOpen(row)}><Dropdown.ItemIcon as={RiSidebarUnfoldLine} />Open person</Dropdown.Item>}
               {onEdit && <Dropdown.Item onSelect={() => onEdit(row)}><Dropdown.ItemIcon as={RiEditLine} />Edit person</Dropdown.Item>}
               {href && <Dropdown.Item onSelect={() => router.push(href)}><Dropdown.ItemIcon as={RiUserSearchLine} />Open CRM record</Dropdown.Item>}
               {person.linkedinUrl && <Dropdown.Item onSelect={() => window.open(linkedInPersonHref(person.linkedinUrl as string), "_blank", "noopener,noreferrer")}><Dropdown.ItemIcon as={RiExternalLinkLine} />Open LinkedIn profile</Dropdown.Item>}
               {person.email && <Dropdown.Item onSelect={() => void navigator.clipboard?.writeText(person.email as string)}><Dropdown.ItemIcon as={RiFileCopyLine} />Copy email</Dropdown.Item>}
               {person.phone && <Dropdown.Item onSelect={() => void navigator.clipboard?.writeText(person.phone as string)}><Dropdown.ItemIcon as={RiPhoneLine} />Copy phone</Dropdown.Item>}
-              {!onEdit && !href && !person.linkedinUrl && !person.email && !person.phone && <div className="p-2 text-paragraph-sm text-text-soft-400">No actions available</div>}
+              {!onOpen && !onEdit && !href && !person.linkedinUrl && !person.email && !person.phone && <div className="p-2 text-paragraph-sm text-text-soft-400">No actions available</div>}
             </Dropdown.Content>
           </Dropdown.Root>
         </div>
@@ -87,9 +90,10 @@ function PersonTableRow({ row, onEdit }: { row: PersonRow; onEdit?: (row: Person
   );
 }
 
-export function PeopleTable({ rows, sort, direction, onSort, loading, onEdit }: {
+export function PeopleTable({ rows, sort, direction, onSort, loading, onEdit, onOpen }: {
   rows: PersonRow[] | null;
   onEdit?: (row: PersonRow) => void;
+  onOpen?: (row: PersonRow) => void;
   sort: string;
   direction: Direction;
   onSort: (key: string) => void;
@@ -110,7 +114,7 @@ export function PeopleTable({ rows, sort, direction, onSort, loading, onEdit }: 
           </tr>
         </Table.Header>
         <Table.Body spacing={4} className={cn("transition-opacity", loading && rows && "opacity-60")} aria-busy={loading}>
-          {rows === null ? Array.from({ length: 10 }, (_, index) => <SkeletonRow key={index} index={index} />) : rows.map((row) => <PersonTableRow key={row.person.id} row={row} onEdit={onEdit} />)}
+          {rows === null ? Array.from({ length: 10 }, (_, index) => <SkeletonRow key={index} index={index} />) : rows.map((row) => <PersonTableRow key={row.person.id} row={row} onEdit={onEdit} onOpen={onOpen} />)}
         </Table.Body>
       </Table.Root>
     </Tooltip.Provider>

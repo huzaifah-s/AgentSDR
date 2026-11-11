@@ -21,6 +21,7 @@ import { AddCompanyModal, type SavedCompany } from "./AddCompanyModal";
 import { AddPersonModal } from "./AddPersonModal";
 import { PeopleImportModal } from "./PeopleImportModal";
 import { PeopleTable } from "./PeopleTable";
+import { PersonDrawer } from "./PersonDrawer";
 import { activeFilterCount, EMPTY_FILTERS, PAGE_SIZE, SORTS, type CompanyRow, type Direction, type LeadsTab, type PeopleFilters, type PersonRow } from "./leadTypes";
 
 type ListState<F> = { query: string; filters: F; sort: string; direction: Direction; page: number };
@@ -75,6 +76,7 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
   const [addPerson, setAddPerson] = useState<{ company?: SavedCompany } | null>(null);
   const [showAddCompany, setShowAddCompany] = useState(false);
   const [editingPerson, setEditingPerson] = useState<PersonRow | null>(null);
+  const [openPerson, setOpenPerson] = useState<PersonRow | null>(null);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
   const skipUrl = useRef<string | null>(requestUrl(initialTab, initialTab === "people" ? freshPeople() : freshCompanies()));
 
@@ -155,7 +157,7 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
   const refetch = () => setReloadToken((value) => value + 1);
 
   const table = isPeople
-    ? <PeopleTable rows={error ? [] : peopleData?.rows ?? null} sort={state.sort} direction={state.direction} onSort={onSort} loading={loading} onEdit={setEditingPerson} />
+    ? <PeopleTable rows={error ? [] : peopleData?.rows ?? null} sort={state.sort} direction={state.direction} onSort={onSort} loading={loading} onEdit={setEditingPerson} onOpen={setOpenPerson} />
     : <CompaniesTable rows={error ? [] : companiesData?.rows ?? null} sort={state.sort} direction={state.direction} onSort={onSort} loading={loading} onOpen={openCompany} />;
 
   const tabs = [
@@ -270,6 +272,16 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
             onClose={() => setAddPerson(null)}
             // A person can create or link a company, so both lists refresh.
             onSaved={() => { if (isPeople) setPeopleState(freshPeople()); else setPeopleData(null); refetch(); }}
+          />
+        )}
+        {openPerson && (
+          <PersonDrawer
+            key={`drawer:${openPerson.person.id}`}
+            // The row as the list now has it, so an edit shows in the open drawer.
+            row={peopleData?.rows.find((row) => row.person.id === openPerson.person.id) ?? openPerson}
+            onClose={() => setOpenPerson(null)}
+            onEdit={setEditingPerson}
+            onChanged={refetch}
           />
         )}
         {editingPerson && (

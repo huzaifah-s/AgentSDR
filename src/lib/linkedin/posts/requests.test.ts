@@ -1,10 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_POST_IMAGE_BYTES, MAX_POST_IMAGES, MAX_POST_LENGTH } from "./contract";
+import {
+  countHashtags,
+  isAlwaysAddedKnowledge,
+  MAX_PICKED_KNOWLEDGE,
+  MAX_POST_IMAGE_BYTES,
+  MAX_POST_IMAGES,
+  MAX_POST_LENGTH,
+  MAX_REWRITE_INSTRUCTION_LENGTH,
+  MAX_TOPIC_LENGTH,
+  sortKnowledgeForPosts,
+} from "./contract";
 import {
   isImageId,
   isPostId,
   parseCreatePost,
+  parseGenerateDrafts,
+  parseGeneration,
   parseListQuery,
+  parseRewriteDraft,
+  parseSource,
   parseUpdatePost,
   sniffImageType,
   validateImageUpload,
@@ -97,5 +111,111 @@ describe("images", () => {
     expect(isImageId("../3f2b8c1e-1d2a-4c3b-9e8f-0a1b2c3d4e5f")).toBe(false);
     expect(isPostId("3f2b8c1e-1d2a-4c3b-9e8f-0a1b2c3d4e5f")).toBe(true);
     expect(isPostId("abc")).toBe(false);
+  });
+});
+
+const DOC_1 = "11111111-1111-4111-8111-111111111111";
+const DOC_2 = "22222222-2222-4222-8222-222222222222";
+const GENERATION = { model: "openai/gpt-5.2", prompts: [{ name: "linkedin/post-system", version: 3 }, { name: "linkedin/post-user", version: null }] };
+
+describe("parseGenerateDrafts", () => {
+  test("a topic, documents, or both", () => {
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", topic: " Cold calls\r\nbefore 10 " })).toEqual({
+      ok: true,
+      value: { linkedinAccountId: "acc", topic: "Cold calls\nbefore 10", knowledgeDocumentIds: [] },
+    });
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", knowledgeDocumentIds: [DOC_1.toUpperCase(), DOC_1, DOC_2] })).toEqual({
+      ok: true,
+      value: { linkedinAccountId: "acc", topic: null, knowledgeDocumentIds: [DOC_1, DOC_2] },
+    });
+  });
+
+  test("refuses nothing to write from, bad ids, and too much", () => {
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", topic: "  " }).ok).toBe(false);
+    expect(parseGenerateDrafts({ topic: "x" }).ok).toBe(false);
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", knowledgeDocumentIds: ["not-a-uuid"] }).ok).toBe(false);
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", knowledgeDocumentIds: DOC_1 }).ok).toBe(false);
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", topic: "x".repeat(MAX_TOPIC_LENGTH + 1) }).ok).toBe(false);
+    const many = Array.from({ length: MAX_PICKED_KNOWLEDGE + 1 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    expect(parseGenerateDrafts({ linkedinAccountId: "acc", knowledgeDocumentIds: many }).ok).toBe(false);
+    expect(parseGenerateDrafts([]).ok).toBe(false);
+  });
+});
+
+describe("parseRewriteDraft", () => {
+  test("the current text and an instruction; sources optional", () => {
+    expect(parseRewriteDraft({ linkedinAccountId: "acc", body: "My post", instruction: " shorter " })).toEqual({
+      ok: true,
+      value: { linkedinAccountId: "acc", topic: null, knowledgeDocumentIds: [], body: "My post", instruction: "shorter" },
+    });
+  });
+
+  test("refuses no text, no instruction, or too much of either", () => {
+    expect(parseRewriteDraft({ linkedinAccountId: "acc", body: " ", instruction: "shorter" }).ok).toBe(false);
+    expect(parseRewriteDraft({ linkedinAccountId: "acc", body: "Text", instruction: "" }).ok).toBe(false);
+    expect(parseRewriteDraft({ linkedinAccountId: "acc", body: "Text" }).ok).toBe(false);
+    expect(parseRewriteDraft({ linkedinAccountId: "acc", body: "x".repeat(MAX_POST_LENGTH + 1), instruction: "shorter" }).ok).toBe(false);
+    expect(parseRewriteDraft({ linkedinAccountId: "acc", body: "Text", instruction: "x".repeat(MAX_REWRITE_INSTRUCTION_LENGTH + 1) }).ok).toBe(false);
+  });
+});
+
+describe("parseSource and parseGeneration", () => {
+  test("a source as the generate route answers it", () => {
+    expect(parseSource({ kind: "knowledge", topic: "x", knowledgeDocumentIds: [DOC_1] })).toEqual({ ok: true, value: { kind: "knowledge", topic: "x", knowledgeDocumentIds: [DOC_1] } });
+    expect(parseSource({ kind: "topic", topic: "x" })).toEqual({ ok: true, value: { kind: "topic", topic: "x" } });
+    expect(parseSource({ kind: "blank" })).toEqual({ ok: true, value: { kind: "blank" } });
+  });
+
+  test("refuses Phase 4's kind, a Knowledge source without documents, and extra fields", () => {
+    expect(parseSource({ kind: "conversations", themeSummary: "x" }).ok).toBe(false);
+    expect(parseSource({ kind: "knowledge" }).ok).toBe(false);
+    expect(parseSource({ kind: "topic", topic: "x", messageIds: ["m1"] }).ok).toBe(false);
+    expect(parseSource("topic").ok).toBe(false);
+  });
+
+  test("a generation names our prompts and their versions", () => {
+    expect(parseGeneration(GENERATION)).toEqual({ ok: true, value: GENERATION });
+    expect(parseGeneration(null)).toEqual({ ok: true, value: null });
+    expect(parseGeneration({ ...GENERATION, prompts: [{ name: "crm/draft-system", version: 1 }] }).ok).toBe(false);
+    expect(parseGeneration({ ...GENERATION, prompts: [{ name: "linkedin/post-user", version: 0 }] }).ok).toBe(false);
+    expect(parseGeneration({ model: "", prompts: [] }).ok).toBe(false);
+    expect(parseGeneration({ ...GENERATION, cost: 1 }).ok).toBe(false);
+  });
+
+  test("create and update carry them as the post's origin", () => {
+    const source = { kind: "topic", topic: "x" };
+    expect(parseCreatePost({ linkedinAccountId: "acc", body: "Hi", source, generation: GENERATION })).toEqual({
+      ok: true,
+      value: { linkedinAccountId: "acc", body: "Hi", origin: { source: { kind: "topic", topic: "x" }, generation: GENERATION } },
+    });
+    expect(parseUpdatePost({ source, generation: GENERATION })).toEqual({ ok: true, value: { origin: { source: { kind: "topic", topic: "x" }, generation: GENERATION } } });
+    expect(parseCreatePost({ linkedinAccountId: "acc", body: "Hi" })).toEqual({ ok: true, value: { linkedinAccountId: "acc", body: "Hi" } });
+    expect(parseUpdatePost({ generation: GENERATION }).ok).toBe(false);
+    expect(parseCreatePost({ linkedinAccountId: "acc", source: { kind: "conversations" } }).ok).toBe(false);
+  });
+});
+
+describe("Knowledge for posts", () => {
+  test("case studies, objections and FAQs first", () => {
+    const sorted = sortKnowledgeForPosts([
+      { kind: "company", title: "About" },
+      { kind: "faq", title: "B FAQ" },
+      { kind: "case_study", title: "Z case" },
+      { kind: "objection", title: "Too expensive" },
+      { kind: "faq", title: "A FAQ" },
+      { kind: "pricing", title: "Pricing" },
+    ]);
+    expect(sorted.map((d) => d.title)).toEqual(["Z case", "Too expensive", "A FAQ", "B FAQ", "About", "Pricing"]);
+  });
+
+  test("only always-include documents tagged public are added on their own", () => {
+    expect(isAlwaysAddedKnowledge({ alwaysInclude: true, isPublic: true })).toBe(true);
+    expect(isAlwaysAddedKnowledge({ alwaysInclude: true, isPublic: false })).toBe(false);
+    expect(isAlwaysAddedKnowledge({ alwaysInclude: false, isPublic: true })).toBe(false);
+  });
+
+  test("countHashtags", () => {
+    expect(countHashtags("#sales is #fun\n#B2B")).toBe(3);
+    expect(countHashtags("We were #1, C# devs, a&#39;b, url.com/#anchor")).toBe(0);
   });
 });

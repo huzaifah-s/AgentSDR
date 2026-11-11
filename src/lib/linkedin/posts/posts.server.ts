@@ -3,6 +3,7 @@ import "server-only";
 import { aliasedTable, and, asc, count, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users } from "@/lib/auth/schema";
+import { crmKnowledgeDocuments } from "@/lib/crm/schema";
 import { linkedInAccounts } from "@/lib/linkedin/schema";
 import { isPlatformNotConnectedError } from "@/lib/platform/credentials";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
@@ -16,7 +17,7 @@ import {
   type LinkedinPostView,
 } from "./contract";
 import { failStalePublishingPosts } from "./publish";
-import type { CreatePostInput, ImageUpload, ListQuery, UpdatePostInput } from "./requests";
+import type { CreatePostInput, ImageUpload, ListQuery, PostOrigin, UpdatePostInput } from "./requests";
 import { linkedinPosts, type LinkedinPostRow } from "./schema";
 import { deletePostImages, postImageFile, postImageKey, putPostImage } from "./storage";
 
@@ -76,6 +77,8 @@ function toView(post: LinkedinPostRow, account: LinkedinPostAccount | null, crea
     body: post.body,
     attachments: post.attachments.map((attachment) => ({ ...attachment, imageId: attachmentImageId(attachment.key) })),
     account,
+    source: post.source ?? null,
+    generation: post.generation ?? null,
     scheduledAt: post.scheduledAt?.toISOString() ?? null,
     publishedAt: post.publishedAt?.toISOString() ?? null,
     postUrl: post.postUrl,
@@ -134,15 +137,28 @@ async function assertAccountInOrg(linkedinAccountId: string): Promise<void> {
   if (!account) throw new PostApiError(400, "Choose one of your organization's LinkedIn accounts");
 }
 
+/** An AI draft's source may only name the organization's own Knowledge. */
+async function assertOriginInOrg(origin: PostOrigin | undefined): Promise<void> {
+  const ids = origin?.source.knowledgeDocumentIds ?? [];
+  if (!ids.length) return;
+  const found = await db
+    .select({ id: crmKnowledgeDocuments.id })
+    .from(crmKnowledgeDocuments)
+    .where(and(inOrg(crmKnowledgeDocuments), inArray(crmKnowledgeDocuments.id, ids)));
+  if (found.length !== ids.length) throw new PostApiError(400, "The post's source names a Knowledge document that was not found");
+}
+
 export async function createPost(input: CreatePostInput, userId: string): Promise<LinkedinPostView> {
   await assertAccountInOrg(input.linkedinAccountId);
+  await assertOriginInOrg(input.origin);
   const [row] = await db
     .insert(linkedinPosts)
     .values({
       organizationId: currentOrganizationId(),
       linkedinAccountId: input.linkedinAccountId,
       body: input.body,
-      source: { kind: "blank" },
+      source: input.origin?.source ?? { kind: "blank" },
+      generation: input.origin?.generation ?? null,
       createdBy: userId,
     })
     .returning({ id: linkedinPosts.id });
@@ -162,6 +178,7 @@ function editableError(status: LinkedinPostStatus): PostApiError {
  */
 export async function updatePost(postId: string, input: UpdatePostInput): Promise<LinkedinPostView> {
   if (input.linkedinAccountId) await assertAccountInOrg(input.linkedinAccountId);
+  await assertOriginInOrg(input.origin);
   const updated = await db.transaction(async (tx) => {
     const [post] = await tx
       .select({ status: linkedinPosts.status })
@@ -176,6 +193,7 @@ export async function updatePost(postId: string, input: UpdatePostInput): Promis
       .set({
         ...(input.body !== undefined ? { body: input.body } : {}),
         ...(input.linkedinAccountId ? { linkedinAccountId: input.linkedinAccountId } : {}),
+        ...(input.origin ? { source: input.origin.source, generation: input.origin.generation } : {}),
         status: nextStatus,
         ...(post.status === "failed" ? { error: null, publishedBy: null } : {}),
         updatedAt: new Date(),

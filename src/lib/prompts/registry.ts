@@ -15,6 +15,7 @@
 import { CALLS_PROMPTS } from "./calls";
 import { CRM_PROMPTS } from "./crm";
 import { GRID_PROMPTS } from "./grid";
+import { LINKEDIN_PROMPTS } from "./linkedin";
 import { QUALIFICATION_PROMPTS } from "./qualification";
 import { SHARED_PROMPTS } from "./shared";
 import { TRANSCRIPTION_PROMPTS } from "./transcription";
@@ -27,6 +28,7 @@ export const PROMPTS = {
   ...QUALIFICATION_PROMPTS,
   ...TRANSCRIPTION_PROMPTS,
   ...CALLS_PROMPTS,
+  ...LINKEDIN_PROMPTS,
 } satisfies Record<string, PromptDefinition>;
 
 export type PromptName = keyof typeof PROMPTS;

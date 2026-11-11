@@ -86,6 +86,10 @@ export type LinkedinPostView = {
   /** `imageId` names the image in /api/linkedin/posts/<id>/images/<imageId>. */
   attachments: (LinkedinPostAttachment & { imageId: string })[];
   account: LinkedinPostAccount | null;
+  /** How it was written; null on rows from before Phase 2 recorded it. */
+  source: LinkedinPostSource | null;
+  /** The AI draft it started from, if any. */
+  generation: LinkedinPostGeneration | null;
   scheduledAt: string | null;
   publishedAt: string | null;
   postUrl: string | null;
@@ -133,4 +137,90 @@ export function feedPreview(body: string): { shown: string; truncated: boolean }
 /** The first non-empty line, for lists. */
 export function firstLine(body: string): string {
   return body.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+// ------------------------------------------------------------ AI drafts (Phase 2)
+
+/** Drafts one "Write with AI" proposes; the rep picks one. A rewrite gives one. */
+export const POST_DRAFT_VARIANTS = 3;
+
+/** The rep's topic: "a line or two". */
+export const MAX_TOPIC_LENGTH = 500;
+
+/** A rewrite's instruction ("shorter", "lead with the number", "less salesy"). */
+export const MAX_REWRITE_INSTRUCTION_LENGTH = 500;
+
+/** Knowledge documents picked by hand for one draft. Each is read whole. */
+export const MAX_PICKED_KNOWLEDGE = 20;
+
+/**
+ * The Knowledge tag that lets a document reach a post. Knowledge is written
+ * for private replies and can hold pricing or client names, so only documents
+ * tagged `public` (and marked "always include") are added on their own; a
+ * document picked by hand without it is used, with a warning in the composer.
+ */
+export const PUBLIC_KNOWLEDGE_TAG = "public";
+
+/** Kinds listed first in the composer's Knowledge picker: what posts are most often made of. */
+export const POST_KNOWLEDGE_KINDS_FIRST: readonly string[] = ["case_study", "objection", "faq"];
+
+export const KNOWLEDGE_KIND_LABELS: Readonly<Record<string, string>> = {
+  case_study: "Case study",
+  objection: "Objection",
+  faq: "FAQ",
+  company: "Company",
+  product: "Product",
+  pricing: "Pricing",
+  scheduling: "Scheduling",
+  custom: "Custom",
+};
+
+/** A Knowledge document as the composer lists it. */
+export type PostKnowledgeOption = {
+  id: string;
+  title: string;
+  kind: string;
+  alwaysInclude: boolean;
+  /** Tagged `public`. */
+  isPublic: boolean;
+  chars: number;
+};
+
+/** Case studies, objections and FAQs first, then the rest; by title within each. */
+export function sortKnowledgeForPosts<T extends { kind: string; title: string }>(documents: readonly T[]): T[] {
+  const rank = (kind: string) => {
+    const index = POST_KNOWLEDGE_KINDS_FIRST.indexOf(kind);
+    return index === -1 ? POST_KNOWLEDGE_KINDS_FIRST.length : index;
+  };
+  return [...documents].sort((a, b) => rank(a.kind) - rank(b.kind) || a.title.localeCompare(b.title));
+}
+
+/** Added to every draft without being picked: always include, and tagged public. */
+export function isAlwaysAddedKnowledge(document: { alwaysInclude: boolean; isPublic: boolean }): boolean {
+  return document.alwaysInclude && document.isPublic;
+}
+
+/** The prompts a post's `generation` may name (src/lib/prompts/linkedin.ts). */
+export const POST_PROMPT_NAMES: readonly string[] = [
+  "linkedin/post-system",
+  "linkedin/post-user",
+  "linkedin/post-rewrite",
+  "linkedin/post-tool",
+];
+
+/** How the author's past posts were read for a draft. */
+export type PostVoiceStatus = "read" | "none" | "unavailable";
+
+/** What /api/linkedin/posts/generate and /rewrite answer. */
+export type PostDraftsResponse = {
+  variants: { body: string }[];
+  /** What to record on the post when the rep uses a variant. */
+  source: LinkedinPostSource;
+  generation: LinkedinPostGeneration;
+  voice: { status: PostVoiceStatus; pastPosts: number };
+};
+
+/** Hashtags in a post's text (`#word`, not `#1`). */
+export function countHashtags(text: string): number {
+  return text.match(/(^|[^\p{L}\p{N}_&#/])#[\p{L}_][\p{L}\p{N}_]*/gu)?.length ?? 0;
 }

@@ -21,6 +21,7 @@ import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame
 import { useDialogs } from "@/components/DialogProvider";
 import { LinkedInAccountTag } from "@/components/linkedin/LinkedInAccountTag";
 import { PageHeader } from "@/components/page/PageHeader";
+import { PostAiPanel } from "./PostAiPanel";
 import {
   EDITABLE_STATUSES,
   feedPreview,
@@ -30,8 +31,12 @@ import {
   POST_IMAGE_TYPES,
   UNCERTAIN_PUBLISH_ERROR,
   type LinkedinPostAccount,
+  type LinkedinPostSource,
   type LinkedinPostView,
+  type PostDraftsResponse,
+  type PostKnowledgeOption,
 } from "@/lib/linkedin/posts/contract";
+import type { PostOrigin } from "@/lib/linkedin/posts/requests";
 import { cn } from "@/utils/cn";
 
 /** Unipile's limit on an image's sides. Checked here, where the image can be measured. */
@@ -44,6 +49,9 @@ type Props = {
   r2SettingsLabel: string;
   postsPerDay: number;
   publishedToday: Record<string, number>;
+  /** OpenRouter is connected: the composer shows "Write with AI". */
+  aiReady: boolean;
+  knowledge: PostKnowledgeOption[];
 };
 
 const accountName = (account: LinkedinPostAccount | null | undefined) => account?.name || account?.username || "this account";
@@ -71,7 +79,7 @@ function imageSize(file: File): Promise<{ width: number; height: number } | null
   });
 }
 
-export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsLabel, postsPerDay, publishedToday }: Props) {
+export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsLabel, postsPerDay, publishedToday, aiReady, knowledge }: Props) {
   const router = useRouter();
   const dialogs = useDialogs();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -82,15 +90,19 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
   const [busy, setBusy] = useState<"save" | "publish" | "image" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** An AI draft the rep used, recorded on the post at the next save. */
+  const [origin, setOrigin] = useState<PostOrigin | null>(null);
 
   const readOnly = post ? !EDITABLE_STATUSES.includes(post.status) : false;
-  const dirty = !post || body !== post.body || accountId !== (post.account?.id ?? "");
+  const dirty = !post || body !== post.body || accountId !== (post.account?.id ?? "") || origin !== null;
   const account = accounts.find((a) => a.id === accountId) ?? post?.account ?? null;
   const today = account ? publishedToday[account.id] ?? 0 : 0;
   const atLimit = today >= postsPerDay;
   const tooLong = body.length > MAX_POST_LENGTH;
   const preview = feedPreview(body);
   const uncertain = post?.status === "failed" && post.error?.startsWith(UNCERTAIN_PUBLISH_ERROR);
+
+  const originPayload = () => (origin ? { source: origin.source, generation: origin.generation } : {});
 
   /** Save what is on screen (creating the draft first time) and return the saved post. */
   async function save(): Promise<LinkedinPostView> {
@@ -99,8 +111,9 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
       const { post: created } = await api<{ post: LinkedinPostView }>("/api/linkedin/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ linkedinAccountId: accountId, body }),
+        body: JSON.stringify({ linkedinAccountId: accountId, body, ...originPayload() }),
       });
+      setOrigin(null);
       setPost(created);
       window.history.replaceState(null, "", `/linkedin/posts/${created.id}`);
       return created;
@@ -110,8 +123,9 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
     const { post: saved } = await api<{ post: LinkedinPostView }>(`/api/linkedin/posts/${post.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ linkedinAccountId: accountId, body }),
+      body: JSON.stringify({ linkedinAccountId: accountId, body, ...originPayload() }),
     });
+    setOrigin(null);
     setPost(saved);
     return saved;
   }
@@ -203,6 +217,23 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
       const { post: after } = await api<{ post: LinkedinPostView }>(`/api/linkedin/posts/${post.id}/images/${imageId}`, { method: "DELETE" });
       setPost(after);
     });
+
+  const onUseDraft = async (draft: { body: string }, answer: PostDraftsResponse, kind: "draft" | "rewrite") => {
+    if (body.trim() && body.trim() !== draft.body) {
+      const ok = await dialogs.confirm({
+        title: "Replace the text in the editor?",
+        description: "The editor's current text is replaced by this draft. Save draft keeps it.",
+        confirmLabel: "Replace",
+      });
+      if (!ok) return;
+    }
+    // A rewrite with no topic or Knowledge of its own keeps how the post was first written.
+    const earlier: LinkedinPostSource | null = origin?.source ?? post?.source ?? null;
+    const source = kind === "rewrite" && answer.source.kind === "blank" && earlier ? earlier : answer.source;
+    setBody(draft.body);
+    setOrigin({ source, generation: answer.generation });
+    setNotice(null);
+  };
 
   const images = post?.attachments ?? [];
   const connectedAccounts = accounts.filter((a) => a.status === "CONNECTED");
@@ -402,26 +433,38 @@ export function PostComposer({ post: initial, accounts, r2Connected, r2SettingsL
           </FramePanel>
         </Frame>
 
-        <Frame className="lg:col-span-5">
-          <FrameHeader title="Preview" description="Roughly what the feed shows before “…see more”. LinkedIn's exact cut varies by screen." />
-          <FramePanel>
-            <article className="rounded-xl bg-bg-white-0 p-4 ring-1 ring-inset ring-stroke-soft-200">
-              {account ? <LinkedInAccountTag account={account} size="md" /> : <span className="text-paragraph-xs text-text-soft-400">Choose an account</span>}
-              <p className={cn("mt-3 whitespace-pre-wrap break-words text-paragraph-sm", body.trim() ? "text-text-strong-950" : "text-text-soft-400")}>
-                {body.trim() ? preview.shown : "Your post's first lines show here."}
-                {preview.truncated && <span className="text-text-sub-600"> …see more</span>}
-              </p>
-              {images.length > 0 && (
-                <div className={cn("mt-3 grid gap-1", images.length > 1 && "grid-cols-2")}>
-                  {images.map((image) => (
-                    // eslint-disable-next-line @next/next/no-img-element -- a presigned R2 redirect, not a static asset
-                    <img key={image.imageId} src={`/api/linkedin/posts/${post!.id}/images/${image.imageId}`} alt="" className="aspect-square w-full rounded-md object-cover" />
-                  ))}
-                </div>
-              )}
-            </article>
-          </FramePanel>
-        </Frame>
+        <div className="space-y-4 lg:col-span-5 lg:space-y-5">
+          {aiReady && !readOnly && (
+            <PostAiPanel
+              accountId={accountId}
+              authorName={accountName(account)}
+              body={body}
+              knowledge={knowledge}
+              disabled={Boolean(busy)}
+              onUse={onUseDraft}
+            />
+          )}
+          <Frame>
+            <FrameHeader title="Preview" description="Roughly what the feed shows before “…see more”. LinkedIn's exact cut varies by screen." />
+            <FramePanel>
+              <article className="rounded-xl bg-bg-white-0 p-4 ring-1 ring-inset ring-stroke-soft-200">
+                {account ? <LinkedInAccountTag account={account} size="md" /> : <span className="text-paragraph-xs text-text-soft-400">Choose an account</span>}
+                <p className={cn("mt-3 whitespace-pre-wrap break-words text-paragraph-sm", body.trim() ? "text-text-strong-950" : "text-text-soft-400")}>
+                  {body.trim() ? preview.shown : "Your post's first lines show here."}
+                  {preview.truncated && <span className="text-text-sub-600"> …see more</span>}
+                </p>
+                {images.length > 0 && (
+                  <div className={cn("mt-3 grid gap-1", images.length > 1 && "grid-cols-2")}>
+                    {images.map((image) => (
+                      // eslint-disable-next-line @next/next/no-img-element -- a presigned R2 redirect, not a static asset
+                      <img key={image.imageId} src={`/api/linkedin/posts/${post!.id}/images/${image.imageId}`} alt="" className="aspect-square w-full rounded-md object-cover" />
+                    ))}
+                  </div>
+                )}
+              </article>
+            </FramePanel>
+          </Frame>
+        </div>
       </div>
     </div>
   );

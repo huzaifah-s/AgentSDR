@@ -3,11 +3,17 @@
  * and the rules are tested (requests.test.ts). Client-safe.
  */
 import {
+  MAX_PICKED_KNOWLEDGE,
   MAX_POST_IMAGE_BYTES,
   MAX_POST_IMAGES,
   MAX_POST_LENGTH,
+  MAX_REWRITE_INSTRUCTION_LENGTH,
+  MAX_TOPIC_LENGTH,
   POST_IMAGE_TYPES,
+  POST_PROMPT_NAMES,
   POST_STATUSES,
+  type LinkedinPostGeneration,
+  type LinkedinPostSource,
   type LinkedinPostStatus,
 } from "./contract";
 
@@ -71,9 +77,80 @@ function asObject(input: unknown): Record<string, unknown> | null {
   return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
 }
 
-export type CreatePostInput = { linkedinAccountId: string; body: string };
+/** How a post was written, when the rep uses an AI draft. */
+export type PostOrigin = { source: LinkedinPostSource; generation: LinkedinPostGeneration | null };
 
-/** POST / — `{ linkedinAccountId, body? }`. A draft may be empty. */
+function readKnowledgeIds(value: unknown): Parsed<string[]> {
+  if (value === undefined || value === null) return ok([]);
+  if (!Array.isArray(value) || value.length > MAX_PICKED_KNOWLEDGE * 2) return fail("knowledgeDocumentIds must be a list of Knowledge document ids");
+  const ids: string[] = [];
+  for (const id of value) {
+    if (typeof id !== "string" || !UUID_PATTERN.test(id)) return fail("knowledgeDocumentIds must be a list of Knowledge document ids");
+    const lower = id.toLowerCase();
+    if (!ids.includes(lower)) ids.push(lower);
+  }
+  return ok(ids);
+}
+
+function readTopic(value: unknown): Parsed<string | null> {
+  if (value === undefined || value === null) return ok(null);
+  if (typeof value !== "string") return fail("topic must be text");
+  const topic = value.replace(/\r\n?/g, "\n").trim();
+  if (topic.length > MAX_TOPIC_LENGTH) return fail(`A topic can be at most ${MAX_TOPIC_LENGTH} characters.`);
+  return ok(topic || null);
+}
+
+/**
+ * `source` as the composer sends it back from a generate or rewrite answer.
+ * `conversations` is Phase 4's, written by the server only.
+ */
+export function parseSource(value: unknown): Parsed<LinkedinPostSource> {
+  const object = asObject(value);
+  if (!object) return fail("source must be an object");
+  const unknown = Object.keys(object).filter((key) => !["kind", "topic", "knowledgeDocumentIds"].includes(key));
+  if (unknown.length) return fail(`source has unknown field(s): ${unknown.join(", ")}`);
+  if (object.kind !== "blank" && object.kind !== "topic" && object.kind !== "knowledge") return fail("source.kind must be blank, topic or knowledge");
+  const topic = readTopic(object.topic);
+  if (!topic.ok) return topic;
+  const ids = readKnowledgeIds(object.knowledgeDocumentIds);
+  if (!ids.ok) return ids;
+  if (object.kind === "knowledge" && ids.value.length === 0) return fail("A Knowledge source names its documents");
+  return ok({ kind: object.kind, ...(topic.value ? { topic: topic.value } : {}), ...(ids.value.length ? { knowledgeDocumentIds: ids.value } : {}) });
+}
+
+/** `generation`: the model and the prompt versions of the AI draft a post started from. */
+export function parseGeneration(value: unknown): Parsed<LinkedinPostGeneration | null> {
+  if (value === null || value === undefined) return ok(null);
+  const object = asObject(value);
+  if (!object) return fail("generation must be an object");
+  if (Object.keys(object).some((key) => key !== "model" && key !== "prompts")) return fail("generation has unknown fields");
+  if (typeof object.model !== "string" || !object.model.trim() || object.model.length > 200) return fail("generation.model must be the model's id");
+  if (!Array.isArray(object.prompts) || object.prompts.length > POST_PROMPT_NAMES.length) return fail("generation.prompts must list the prompts used");
+  const prompts: LinkedinPostGeneration["prompts"] = [];
+  for (const prompt of object.prompts) {
+    const entry = asObject(prompt);
+    if (!entry || typeof entry.name !== "string" || !POST_PROMPT_NAMES.includes(entry.name)) return fail("generation.prompts names an unknown prompt");
+    const version = entry.version;
+    if (version !== null && (typeof version !== "number" || !Number.isInteger(version) || version < 1)) return fail("generation.prompts has an invalid version");
+    prompts.push({ name: entry.name, version });
+  }
+  return ok({ model: object.model.trim(), prompts });
+}
+
+function readOrigin(object: Record<string, unknown>): Parsed<PostOrigin | undefined> {
+  if (object.source === undefined) {
+    return object.generation === undefined ? ok(undefined) : fail("generation is saved with its source");
+  }
+  const source = parseSource(object.source);
+  if (!source.ok) return source;
+  const generation = parseGeneration(object.generation);
+  if (!generation.ok) return generation;
+  return ok({ source: source.value, generation: generation.value });
+}
+
+export type CreatePostInput = { linkedinAccountId: string; body: string; origin?: PostOrigin };
+
+/** POST / — `{ linkedinAccountId, body?, source?, generation? }`. A draft may be empty. */
 export function parseCreatePost(input: unknown): Parsed<CreatePostInput> {
   const object = asObject(input);
   if (!object) return fail("Expected a JSON object");
@@ -81,12 +158,14 @@ export function parseCreatePost(input: unknown): Parsed<CreatePostInput> {
   if (!account.ok) return account;
   const body = readBody(object.body ?? "");
   if (!body.ok) return body;
-  return ok({ linkedinAccountId: account.value, body: body.value });
+  const origin = readOrigin(object);
+  if (!origin.ok) return origin;
+  return ok({ linkedinAccountId: account.value, body: body.value, ...(origin.value ? { origin: origin.value } : {}) });
 }
 
-export type UpdatePostInput = { linkedinAccountId?: string; body?: string };
+export type UpdatePostInput = { linkedinAccountId?: string; body?: string; origin?: PostOrigin };
 
-/** PATCH /[id] — any of `{ linkedinAccountId, body }`, at least one. */
+/** PATCH /[id] — any of `{ linkedinAccountId, body, source (+ generation) }`, at least one. */
 export function parseUpdatePost(input: unknown): Parsed<UpdatePostInput> {
   const object = asObject(input);
   if (!object) return fail("Expected a JSON object");
@@ -101,8 +180,51 @@ export function parseUpdatePost(input: unknown): Parsed<UpdatePostInput> {
     if (!body.ok) return body;
     update.body = body.value;
   }
-  if (update.linkedinAccountId === undefined && update.body === undefined) return fail("Nothing to change");
+  const origin = readOrigin(object);
+  if (!origin.ok) return origin;
+  if (origin.value) update.origin = origin.value;
+  if (update.linkedinAccountId === undefined && update.body === undefined && !update.origin) return fail("Nothing to change");
   return ok(update);
+}
+
+export type GenerateDraftsInput = { linkedinAccountId: string; topic: string | null; knowledgeDocumentIds: string[] };
+
+function readDraftSources(object: Record<string, unknown>): Parsed<GenerateDraftsInput> {
+  const account = readAccountId(object.linkedinAccountId);
+  if (!account.ok) return account;
+  const topic = readTopic(object.topic);
+  if (!topic.ok) return topic;
+  const ids = readKnowledgeIds(object.knowledgeDocumentIds);
+  if (!ids.ok) return ids;
+  if (ids.value.length > MAX_PICKED_KNOWLEDGE) return fail(`Choose at most ${MAX_PICKED_KNOWLEDGE} Knowledge documents.`);
+  return ok({ linkedinAccountId: account.value, topic: topic.value, knowledgeDocumentIds: ids.value });
+}
+
+/** POST /generate — `{ linkedinAccountId, topic?, knowledgeDocumentIds? }`, a topic or a document at least. */
+export function parseGenerateDrafts(input: unknown): Parsed<GenerateDraftsInput> {
+  const object = asObject(input);
+  if (!object) return fail("Expected a JSON object");
+  const sources = readDraftSources(object);
+  if (!sources.ok) return sources;
+  if (!sources.value.topic && sources.value.knowledgeDocumentIds.length === 0) return fail("Write a topic or choose a Knowledge document.");
+  return sources;
+}
+
+export type RewriteDraftInput = GenerateDraftsInput & { body: string; instruction: string };
+
+/** POST /rewrite — `{ linkedinAccountId, body, instruction, topic?, knowledgeDocumentIds? }`. */
+export function parseRewriteDraft(input: unknown): Parsed<RewriteDraftInput> {
+  const object = asObject(input);
+  if (!object) return fail("Expected a JSON object");
+  const sources = readDraftSources(object);
+  if (!sources.ok) return sources;
+  const body = readBody(object.body);
+  if (!body.ok) return body;
+  if (!body.value.trim()) return fail("Write something first, then ask for a rewrite.");
+  if (typeof object.instruction !== "string" || !object.instruction.trim()) return fail("Say how to rewrite it, such as “shorter”.");
+  const instruction = object.instruction.replace(/\r\n?/g, "\n").trim();
+  if (instruction.length > MAX_REWRITE_INSTRUCTION_LENGTH) return fail(`An instruction can be at most ${MAX_REWRITE_INSTRUCTION_LENGTH} characters.`);
+  return ok({ ...sources.value, body: body.value, instruction });
 }
 
 /** What the first bytes of a file say it is; null for anything but the four image types. */

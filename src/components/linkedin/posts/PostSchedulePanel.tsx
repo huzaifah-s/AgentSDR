@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RiCalendarScheduleLine, RiCalendarCloseLine, RiErrorWarningLine, RiLoader4Line } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Input from "@/components/alignui/input";
@@ -37,8 +37,15 @@ type Props = {
 export function PostSchedulePanel({ post, timeZone, accountName, otherPosts, disabled, busy, canSchedule, onSchedule, onUnschedule }: Props) {
   const scheduled = post?.status === "scheduled" && post.scheduledAt ? post.scheduledAt : null;
   const [value, setValue] = useState(() => (scheduled ? scheduleInputs(timeZone, new Date(scheduled)) : suggestedTime(timeZone)));
+  // The clock the "too soon" check reads, kept in state (not read during
+  // render) and moved on every 15 s so the check stays current.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
   const instant = scheduleInstant(timeZone, value.date, value.time);
-  const tooSoon = instant ? instant.getTime() - Date.now() < MIN_SCHEDULE_LEAD_MS : false;
+  const tooSoon = instant ? instant.getTime() - now < MIN_SCHEDULE_LEAD_MS : false;
   const nearby = instant ? nearbyPosts(instant, otherPosts, post?.id ?? null) : [];
   const unchanged = Boolean(scheduled && instant && instant.getTime() === new Date(scheduled).getTime());
 

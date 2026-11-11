@@ -74,6 +74,7 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
   const [showImport, setShowImport] = useState(false);
   const [addPerson, setAddPerson] = useState<{ company?: SavedCompany } | null>(null);
   const [showAddCompany, setShowAddCompany] = useState(false);
+  const [editingPerson, setEditingPerson] = useState<PersonRow | null>(null);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
   const skipUrl = useRef<string | null>(requestUrl(initialTab, initialTab === "people" ? freshPeople() : freshCompanies()));
 
@@ -154,7 +155,7 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
   const refetch = () => setReloadToken((value) => value + 1);
 
   const table = isPeople
-    ? <PeopleTable rows={error ? [] : peopleData?.rows ?? null} sort={state.sort} direction={state.direction} onSort={onSort} loading={loading} />
+    ? <PeopleTable rows={error ? [] : peopleData?.rows ?? null} sort={state.sort} direction={state.direction} onSort={onSort} loading={loading} onEdit={setEditingPerson} />
     : <CompaniesTable rows={error ? [] : companiesData?.rows ?? null} sort={state.sort} direction={state.direction} onSort={onSort} loading={loading} onOpen={openCompany} />;
 
   const tabs = [
@@ -269,6 +270,15 @@ export default function LeadsClient({ initialTab, initialRows, initialTotal }: P
             onClose={() => setAddPerson(null)}
             // A person can create or link a company, so both lists refresh.
             onSaved={() => { if (isPeople) setPeopleState(freshPeople()); else setPeopleData(null); refetch(); }}
+          />
+        )}
+        {editingPerson && (
+          <AddPersonModal
+            key={editingPerson.person.id}
+            editing={editingPerson}
+            onClose={() => setEditingPerson(null)}
+            // Keep the page and filters where they are: only the row changed.
+            onSaved={refetch}
           />
         )}
         {showAddCompany && (

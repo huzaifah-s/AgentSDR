@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { RiExternalLinkLine, RiFileCopyLine, RiMore2Line, RiPhoneLine, RiUserSearchLine } from "@remixicon/react";
+import { RiEditLine, RiExternalLinkLine, RiFileCopyLine, RiMore2Line, RiPhoneLine, RiUserSearchLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Table from "@/components/alignui/table";
@@ -31,7 +31,7 @@ function SkeletonRow({ index }: { index: number }) {
   );
 }
 
-function PersonTableRow({ row }: { row: PersonRow }) {
+function PersonTableRow({ row, onEdit }: { row: PersonRow; onEdit?: (row: PersonRow) => void }) {
   const router = useRouter();
   const { person, company, campaigns, crm } = row;
   const href = crm ? `/crm/records/${crm.recordId}` : null;
@@ -73,11 +73,12 @@ function PersonTableRow({ row }: { row: PersonRow }) {
               <Button.Root variant="neutral" mode="ghost" size="xsmall" aria-label={`More actions for ${name}`}><Button.Icon as={RiMore2Line} /></Button.Root>
             </Dropdown.Trigger>
             <Dropdown.Content>
+              {onEdit && <Dropdown.Item onSelect={() => onEdit(row)}><Dropdown.ItemIcon as={RiEditLine} />Edit person</Dropdown.Item>}
               {href && <Dropdown.Item onSelect={() => router.push(href)}><Dropdown.ItemIcon as={RiUserSearchLine} />Open CRM record</Dropdown.Item>}
               {person.linkedinUrl && <Dropdown.Item onSelect={() => window.open(linkedInPersonHref(person.linkedinUrl as string), "_blank", "noopener,noreferrer")}><Dropdown.ItemIcon as={RiExternalLinkLine} />Open LinkedIn profile</Dropdown.Item>}
               {person.email && <Dropdown.Item onSelect={() => void navigator.clipboard?.writeText(person.email as string)}><Dropdown.ItemIcon as={RiFileCopyLine} />Copy email</Dropdown.Item>}
               {person.phone && <Dropdown.Item onSelect={() => void navigator.clipboard?.writeText(person.phone as string)}><Dropdown.ItemIcon as={RiPhoneLine} />Copy phone</Dropdown.Item>}
-              {!href && !person.linkedinUrl && !person.email && !person.phone && <div className="p-2 text-paragraph-sm text-text-soft-400">No actions available</div>}
+              {!onEdit && !href && !person.linkedinUrl && !person.email && !person.phone && <div className="p-2 text-paragraph-sm text-text-soft-400">No actions available</div>}
             </Dropdown.Content>
           </Dropdown.Root>
         </div>
@@ -86,8 +87,9 @@ function PersonTableRow({ row }: { row: PersonRow }) {
   );
 }
 
-export function PeopleTable({ rows, sort, direction, onSort, loading }: {
+export function PeopleTable({ rows, sort, direction, onSort, loading, onEdit }: {
   rows: PersonRow[] | null;
+  onEdit?: (row: PersonRow) => void;
   sort: string;
   direction: Direction;
   onSort: (key: string) => void;
@@ -108,7 +110,7 @@ export function PeopleTable({ rows, sort, direction, onSort, loading }: {
           </tr>
         </Table.Header>
         <Table.Body spacing={4} className={cn("transition-opacity", loading && rows && "opacity-60")} aria-busy={loading}>
-          {rows === null ? Array.from({ length: 10 }, (_, index) => <SkeletonRow key={index} index={index} />) : rows.map((row) => <PersonTableRow key={row.person.id} row={row} />)}
+          {rows === null ? Array.from({ length: 10 }, (_, index) => <SkeletonRow key={index} index={index} />) : rows.map((row) => <PersonTableRow key={row.person.id} row={row} onEdit={onEdit} />)}
         </Table.Body>
       </Table.Root>
     </Tooltip.Provider>

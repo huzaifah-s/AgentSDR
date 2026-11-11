@@ -99,7 +99,7 @@ export function mergePersonRaw(
   return { ...(existing ?? {}), ...incoming };
 }
 
-async function lockIdentities(tx: LeadExecutor, identities: string[]) {
+export async function lockIdentities(tx: LeadExecutor, identities: string[]) {
   // Identities are unique per organization, so the lock is too: two
   // organizations importing the same email must not queue behind each other.
   const organizationId = currentOrganizationId();

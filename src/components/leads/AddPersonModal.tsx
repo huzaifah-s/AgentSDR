@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { RiUserAddLine } from "@remixicon/react";
+import { RiEditLine, RiUserAddLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Modal from "@/components/alignui/modal";
 import * as Textarea from "@/components/alignui/textarea";
 import { FormError, TextField } from "@/components/calls/fields";
 import { CompanyNameField } from "@/components/calling/CompanyNameField";
+import { personCompanyName } from "@/lib/leads/companyName";
 import { inferCompanyDomainFromEmail, parseCompanyDomain } from "@/lib/leads/identity";
+import type { PersonRow } from "./leadTypes";
 
 type Fields = {
   firstName: string;
@@ -47,19 +49,43 @@ function companyOutcome(fields: Fields): { tone: "linked" | "text" | "error"; me
     : { tone: "text", message: "Kept on the person as text only. Add the company's domain to link them to it." };
 }
 
+/** The form's fields for an existing person, as the Leads list returned it. */
+function fieldsFromRow({ person, company }: PersonRow): Fields {
+  // Older sources may hold only a full name; split it the simple way for editing.
+  const [first = "", ...rest] = (person.firstName || person.lastName ? "" : person.fullName ?? "").trim().split(/\s+/);
+  const notes = person.raw?.notes;
+  return {
+    firstName: person.firstName ?? first,
+    lastName: person.lastName ?? rest.join(" "),
+    email: person.email ?? "",
+    linkedinUrl: person.linkedinUrl ? (person.linkedinUrl.includes("/") ? person.linkedinUrl : `linkedin.com/in/${person.linkedinUrl}`) : "",
+    phone: person.phone ?? "",
+    title: person.title ?? "",
+    companyName: personCompanyName(person.raw, company?.name) ?? "",
+    companyDomain: company?.domain ?? "",
+    notes: typeof notes === "string" ? notes : "",
+  };
+}
+
 /**
  * One person typed by hand, through the same path as a sheet import
  * (`POST /api/leads/people` → `upsertManualPerson`): an existing person with
  * that email or LinkedIn profile is updated, not duplicated, and no CRM record
  * is created — that begins with a reply or a call, as for imported people.
  * `company` prefills the company (from Add company → "Save and add a person").
+ *
+ * With `editing`, the same form edits that person instead
+ * (`PATCH /api/leads/people/[id]`, `updatePerson`): every field is replaced,
+ * an email or LinkedIn profile another person holds is refused, and clearing
+ * the company fields unlinks the person from their company.
  */
-export function AddPersonModal({ onClose, onSaved, company }: {
+export function AddPersonModal({ onClose, onSaved, company, editing }: {
   onClose: () => void;
   onSaved: () => void;
   company?: { name: string | null; domain: string };
+  editing?: PersonRow;
 }) {
-  const initial: Fields = company ? { ...EMPTY, companyName: company.name ?? "", companyDomain: company.domain } : EMPTY;
+  const initial: Fields = editing ? fieldsFromRow(editing) : company ? { ...EMPTY, companyName: company.name ?? "", companyDomain: company.domain } : EMPTY;
   const [fields, setFields] = useState<Fields>(initial);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -67,13 +93,32 @@ export function AddPersonModal({ onClose, onSaved, company }: {
 
   const set = (key: keyof Fields) => (value: string) => setFields((current) => ({ ...current, [key]: value }));
   const hasIdentity = Boolean(fields.email.trim() || fields.linkedinUrl.trim());
-  const outcome = companyOutcome(fields);
+  const linkedBefore = editing?.company ?? null;
+  const outcome = companyOutcome(fields) ?? (linkedBefore
+    ? { tone: "text" as const, message: `Removed from ${linkedBefore.name || linkedBefore.domain} when saved.` }
+    : null);
   const canSave = hasIdentity && outcome?.tone !== "error";
 
   async function submit(event: React.FormEvent, addAnother: boolean) {
     event.preventDefault();
     if (!hasIdentity) return setError("Add an email address or a LinkedIn profile URL.");
     setSubmitting(true); setError("");
+    if (editing) {
+      try {
+        const response = await fetch(`/api/leads/people/${editing.person.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(fields),
+        });
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        if (!response.ok) throw new Error(data.error ?? "Could not save this person");
+        onSaved();
+        onClose();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not save this person");
+      } finally { setSubmitting(false); }
+      return;
+    }
     try {
       const response = await fetch("/api/leads/people", {
         method: "POST",
@@ -104,9 +149,11 @@ export function AddPersonModal({ onClose, onSaved, company }: {
     <Modal.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Modal.Content size="max-w-xl">
         <form onSubmit={(event) => void submit(event, false)}>
-          <Modal.Header icon={RiUserAddLine}>
-            <Modal.Title>Add person</Modal.Title>
-            <Modal.Description>An email or LinkedIn URL is required. A person who already exists is updated.</Modal.Description>
+          <Modal.Header icon={editing ? RiEditLine : RiUserAddLine}>
+            <Modal.Title>{editing ? "Edit person" : "Add person"}</Modal.Title>
+            <Modal.Description>{editing
+              ? "An email or LinkedIn URL is required. Their CRM record and campaigns stay with them."
+              : "An email or LinkedIn URL is required. A person who already exists is updated."}</Modal.Description>
           </Modal.Header>
           <Modal.Body className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -143,7 +190,7 @@ export function AddPersonModal({ onClose, onSaved, company }: {
           </Modal.Body>
           <Modal.Footer>
             <Button.Root type="button" variant="neutral" mode="stroke" size="small" onClick={onClose}>{saved ? "Done" : "Cancel"}</Button.Root>
-            <Button.Root type="button" variant="neutral" mode="stroke" size="small" disabled={!canSave || submitting} onClick={(event) => void submit(event, true)}>Save and add another</Button.Root>
+            {!editing && <Button.Root type="button" variant="neutral" mode="stroke" size="small" disabled={!canSave || submitting} onClick={(event) => void submit(event, true)}>Save and add another</Button.Root>}
             <Button.Root type="submit" variant="primary" mode="filled" size="small" disabled={!canSave || submitting}>{submitting ? "Saving…" : "Save"}</Button.Root>
           </Modal.Footer>
         </form>

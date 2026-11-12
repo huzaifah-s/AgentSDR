@@ -155,7 +155,29 @@ registry.
 - **Body size**: a 500-lead call is well under Next.js's default limit for a
   route handler body. No configuration is needed.
 
-## Phase 2: design (12 Nov 2026)
+## Phase 2: design (12 Nov 2026), built the same day
+
+What changed from this design while building it:
+
+- **Choosing an organization** is recorded in a short-lived cookie
+  (`src/lib/auth/oauthOrganizationChoice.ts`): in plugin 1.7.7 the postLogin
+  step ends only when `shouldRedirect` says the choice is made. The switch
+  happens on the server (`/api/oauth/organization`), because on the picker
+  page the plugin's browser helper adds the signed query to every POST, and
+  `organization.setActive` re-set the session cookie and re-ran the
+  authorization before the choice was recorded, looping back to the picker.
+- **Desktop clients**: a registration with only `http://localhost` redirect
+  URIs and no `application_type` becomes `native` (RFC 8252), where the plugin
+  would default to `web` and refuse it (`oauthRegistration.ts`).
+- **Disconnecting** is ours (`connectedApps.ts`): the plugin's delete-consent
+  leaves the app's tokens working.
+- **No browser-session condition** on tokens: the plugin's refresh grant
+  copies the session id without checking it and signing out nulls it, so
+  that check cut apps off on session expiry but not on sign-out. A connected
+  app lasts until it is disconnected, the person leaves the organization, or
+  it goes unused for the 30-day refresh lifetime.
+- **Client management from a session is refused** (`clientPrivileges: () => false`).
+- Checked by `scripts/e2e/mcp-oauth.ts` (27 checks) and in a browser.
 
 Three pieces, each in its own commit, in this order: the smaller two make
 OAuth tokens simpler to describe, because a token's scopes reuse what keys

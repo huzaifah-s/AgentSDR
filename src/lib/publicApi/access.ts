@@ -43,5 +43,8 @@ export function scopesForKeyAccess(access: ApiKeyAccess): ReadonlySet<ApiScope> 
 export type ApiCaller = {
   organizationId: string;
   scopes: ReadonlySet<ApiScope>;
-  credential: { kind: "api_key"; keyId: string; access: ApiKeyAccess };
+  credential:
+    | { kind: "api_key"; keyId: string; access: ApiKeyAccess }
+    /** A person, through an app they connected with OAuth (MCP only; src/lib/publicApi/oauth.ts). */
+    | { kind: "oauth"; userId: string; clientId: string };
 };

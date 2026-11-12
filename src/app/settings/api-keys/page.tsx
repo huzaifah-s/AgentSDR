@@ -15,7 +15,7 @@ export default async function Page() {
   return (
     <SettingsPage
       title="API keys"
-      description="Let another application add leads to your email campaigns and stop their sequences."
+      description="Let another application or an AI assistant read your email campaigns and CRM queue, add leads and stop their sequences."
       width="narrow"
     >
       {canManage ? (

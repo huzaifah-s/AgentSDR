@@ -24,6 +24,12 @@ function accessRequestHref(email: string) {
   return `mailto:${ACCESS_REQUEST_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
+function oauthContinuation(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const { redirect, url } = data as { redirect?: unknown; url?: unknown };
+  return redirect === true && typeof url === "string" && url ? url : null;
+}
+
 export function SignInForm({
   googleEnabled,
   from,
@@ -49,8 +55,13 @@ export function SignInForm({
     setUnverified(false);
     setResent(false);
     setLoading(true);
-    const { error: err } = await authClient.signIn.email({ email, password, callbackURL: target });
+    const { data, error: err } = await authClient.signIn.email({ email, password, callbackURL: target });
     if (!err) {
+      // Signing in during an OAuth authorization (an MCP client connecting):
+      // the response names where the flow continues (choose an organization,
+      // consent, or back to the client), and Better Auth's client is already
+      // navigating there. Going to `target` too would cut the flow off.
+      if (oauthContinuation(data)) return;
       window.location.href = target;
       return;
     }

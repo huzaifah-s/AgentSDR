@@ -218,7 +218,20 @@ change. Access is by scope (`campaigns:read`, `campaigns:write`,
 only the tools the caller's scopes allow. Write operations call
 `assertCampaignWritesAllowed()` themselves:
 the campaign-mutation pause in `proxy.ts` matches by path, and
-`/api/v1/mcp` is not under `/api/v1/campaigns`. Keep `zod` at the version
+`/api/v1/mcp` is not under `/api/v1/campaigns`.
+
+`/api/v1/mcp` also accepts OAuth access tokens (`withApiKey(…, { oauth })`),
+so MCP clients that connect by signing in (claude.ai connectors) work.
+Better Auth is the authorization server (`@better-auth/oauth-provider`,
+`src/lib/auth/oauthProvider.ts`): open dynamic registration, opaque tokens
+stored hashed, the MCP endpoint as the one resource, the API's scopes plus
+`offline_access`, and client management from a session refused for
+everyone. A token acts as a person in the organization chosen at
+`/oauth/organization` (its `reference_id`); `src/lib/publicApi/oauth.ts`
+re-checks membership on every request. Settings, Connected apps disconnects
+through `connectedApps.ts`, which also revokes the tokens (the plugin's
+delete-consent does not). The OAuth tables are in `AUTH_TABLES`: global, like
+Better Auth's own. Discovery is built from `BETTER_AUTH_URL`. Keep `zod` at the version
 `@modelcontextprotocol/sdk` resolves to, or the SDK gets its own copy and
 tool schemas stop typechecking.
 

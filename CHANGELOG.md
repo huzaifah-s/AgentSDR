@@ -26,12 +26,21 @@ Each release lists the database migrations it needs; see
 - **MCP server** at `/api/v1/mcp` for AI assistants (Claude Code, Cursor, any
   MCP client), with the same keys: every public API call is a tool, and a
   read-only key sees only the read tools. See `docs/mcp.mdx`.
+- **Connect an AI assistant by signing in (OAuth).** MCP clients that use
+  OAuth, such as custom connectors on claude.ai, connect with the server's
+  address alone: they register themselves, the person signs in, chooses an
+  organization and allows read or read-and-write access. Settings,
+  Connected apps lists and disconnects them. Built on
+  `@better-auth/oauth-provider`; `BETTER_AUTH_URL` must be the site's public
+  address, since the OAuth metadata is built from it.
 
 ### Migrations
 
 - `bun run scripts/create-api-keys.ts` creates the `api_keys` table.
 - `bun run scripts/add-api-key-access.ts` adds `api_keys.access` (existing
   keys stay read and write).
+- `bun run scripts/create-oauth-provider-tables.ts` creates the OAuth
+  provider's seven tables (`oauth_clients`, `oauth_access_tokens`, …).
 
 ## [0.3.1] - 2026-10-08
 

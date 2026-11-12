@@ -8,6 +8,7 @@ import { organization } from "better-auth/plugins";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { authEmail, sendAuthEmail } from "./email";
+import { buildOAuthProvider } from "./oauthProvider";
 import { ac, roles } from "./permissions";
 import { authSchema, members } from "./schema";
 import { mayCreateAccount, mayCreateOrganization } from "./signup";
@@ -22,6 +23,9 @@ import { mayCreateAccount, mayCreateOrganization } from "./signup";
  *
  * Better Auth authenticates and tracks the active organization; it does not
  * scope our tables. That is src/lib/auth/context.ts and every query after it.
+ *
+ * It is also an OAuth authorization server for MCP clients
+ * (src/lib/auth/oauthProvider.ts).
  */
 
 const baseURL = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL;
@@ -155,6 +159,7 @@ export const auth = betterAuth({
         ).catch((error) => console.error("[auth] invitation email failed:", error));
       },
     }),
+    buildOAuthProvider(),
     // Must stay last: lets server actions set Better Auth's cookies.
     nextCookies(),
   ],

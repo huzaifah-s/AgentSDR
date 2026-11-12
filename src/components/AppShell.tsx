@@ -20,6 +20,8 @@ const CHROMELESS_ROUTES = [
   "/reset-password",
   "/onboarding",
   "/accept-invitation",
+  // OAuth: choosing an organization and consenting for an MCP client.
+  "/oauth",
   // First-run setup: no session exists yet, so SessionGate would send the
   // visitor to /sign-in, which sends a fresh instance straight back here.
   "/setup",

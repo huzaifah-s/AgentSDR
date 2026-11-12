@@ -52,6 +52,10 @@ const PUBLIC = [
   // session. Every route under this prefix starts with withApiKey()
   // (src/lib/publicApi/http.ts); never add one that doesn't.
   "/api/v1/",
+  // OAuth discovery for MCP clients (src/lib/auth/oauthProvider.ts): static
+  // metadata, no data. The OAuth endpoints themselves are under /api/auth.
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-protected-resource",
 ];
 
 /**

@@ -189,4 +189,14 @@ export const AUTH_TABLES: readonly string[] = [
   "invitations",
   "teams",
   "team_members",
+  // The OAuth provider (scripts/create-oauth-provider-tables.ts): a token is
+  // a person's, its organization (reference_id) re-checked against their
+  // membership on every request (src/lib/publicApi/oauth.ts).
+  "oauth_clients",
+  "oauth_resources",
+  "oauth_client_resources",
+  "oauth_refresh_tokens",
+  "oauth_access_tokens",
+  "oauth_consents",
+  "oauth_client_assertions",
 ];

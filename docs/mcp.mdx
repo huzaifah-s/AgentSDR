@@ -4,15 +4,33 @@ description: "Let an AI assistant read your email campaigns and the CRM queue, a
 icon: "robot"
 ---
 
-BraintreeSDR is also an [MCP](https://modelcontextprotocol.io) server, so an AI assistant such as Claude Code, Cursor or any other MCP client can work with your email campaigns. It can do what the [public API](/api) does, with the same key and the same rules. An assistant just calls tools instead of URLs.
+BraintreeSDR is also an [MCP](https://modelcontextprotocol.io) server, so an AI assistant such as Claude, Claude Code, Cursor or any other MCP client can work with your email campaigns. It can do what the [public API](/api) does, with the same rules. An assistant just calls tools instead of URLs.
 
-## Connect
+There are two ways to connect:
+
+- **Sign in (OAuth).** The assistant sends you to BraintreeSDR to sign in and allow it. It then acts as you, inside one organization you choose. This is how a custom connector on claude.ai connects, and any client that supports MCP authorization.
+- **An API key.** You paste a key into the assistant's settings. It acts for the whole organization.
+
+The server's address is your site's address followed by `/api/v1/mcp`. Settings, API keys shows the full address. It speaks Streamable HTTP.
+
+## Connect by signing in
+
+Give the assistant the server's address and nothing else, for example when adding a custom connector on claude.ai. The first time it connects:
+
+1. It registers itself with BraintreeSDR (no setup on your side).
+2. You sign in, if you are not already.
+3. If you belong to several organizations, you choose the one it will work in.
+4. You see what it is asking for and allow it. Adding and stopping leads is optional: untick it and the assistant can only read.
+
+Any member can connect an assistant this way. It can do only what you allowed, only in the organization you chose, and only while you are a member of it: leave or be removed from the organization and it stops at once. It stays connected while it is used at least once every 30 days. **Settings, Connected apps** lists the assistants you connected and disconnects one at once.
+
+## Connect with an API key
 
 You need an API key. Owners and admins create one in **Settings, API keys**; name it after the assistant that will use it. The key acts for the whole organization, and **Revoke** stops it at once.
 
 Choose **Read only** for an assistant that should only look: it gets the read tools below and never sees the tools that add or stop leads.
 
-The server's address is your site's address followed by `/api/v1/mcp`. Settings, API keys shows the full address. It speaks Streamable HTTP and expects the key as `Authorization: Bearer <key>`.
+Send it as `Authorization: Bearer <key>`.
 
 ### Claude Code
 
@@ -44,8 +62,6 @@ Any client that can reach a Streamable HTTP server with a custom header works. A
 npx mcp-remote https://agentsdr.example.com/api/v1/mcp --header "Authorization: Bearer asdr_..."
 ```
 
-Clients that connect only through OAuth, such as custom connectors on claude.ai, cannot connect yet, because the server accepts API keys only.
-
 ## Tools
 
 | Tool | What it does | Same as |
@@ -57,7 +73,7 @@ Clients that connect only through OAuth, such as custom connectors on claude.ai,
 | `add_leads_to_campaign` | Adds up to 500 leads to a campaign. Read-and-write keys only. | `POST /api/v1/campaigns/:id/leads` |
 | `stop_campaign_leads` | Ends a campaign's sequence for up to 500 leads, by email. Read-and-write keys only. | `POST /api/v1/campaigns/:id/leads/stop` |
 
-The first four only read; an assistant client may run them without asking you each time.
+The first four only read; an assistant client may run them without asking you each time. An assistant connected by signing in sees the tools for what you allowed it; one with a key sees the tools for the key's access.
 
 The rules and the results are the ones in the [public API](/api):
 
@@ -68,6 +84,8 @@ The rules and the results are the ones in the [public API](/api):
 Each result comes as structured content and as JSON text, for clients that show only text.
 
 ## Notes
+
+- OAuth discovery lives at `/.well-known/oauth-protected-resource/api/v1/mcp` and `/.well-known/oauth-authorization-server/api/auth`, and a `401` from `/api/v1/mcp` names the first, which is how a client finds where to sign in. They are built from `BETTER_AUTH_URL`, so it must be the address people reach the site at.
 
 - The server keeps no session between requests, so a client never needs to reconnect after a deployment. It answers `GET` and `DELETE` with `405`: there is no event stream to open and no session to end.
 - While `PAUSE_CAMPAIGN_MUTATIONS` (or `PEOPLE_MIGRATION_MODE`) is on, adding and stopping leads are refused, the same as through the REST API. Listing still works.

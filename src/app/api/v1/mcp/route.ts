@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { MCP_RESOURCE_METADATA_URL } from "@/lib/auth/oauthProvider";
 import { withApiKey } from "@/lib/publicApi/http";
 import { buildMcpServer } from "@/lib/publicApi/mcp";
 import * as operations from "@/lib/publicApi/operations";
@@ -8,7 +9,8 @@ export const dynamic = "force-dynamic";
 
 // /api/v1/mcp: the public API as an MCP server (Streamable HTTP), for AI
 // assistants. Same API key and same operations as the REST routes
-// (src/lib/publicApi/mcp.ts, docs/mcp.mdx).
+// (src/lib/publicApi/mcp.ts, docs/mcp.mdx), or an OAuth access token from an
+// app a person connected (claude.ai connectors; src/lib/publicApi/oauth.ts).
 //
 // Stateless: every POST gets its own server and transport, inside the
 // organization scope withApiKey opens, and nothing outlives the request, so
@@ -25,7 +27,7 @@ export async function POST(req: NextRequest) {
     } finally {
       await server.close();
     }
-  });
+  }, { oauth: { resourceMetadataUrl: MCP_RESOURCE_METADATA_URL } });
 }
 
 // A stateless server has no server-to-client stream (GET) and no session to end (DELETE).

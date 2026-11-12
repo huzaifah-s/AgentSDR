@@ -1,4 +1,5 @@
 import {
+  RiApps2Line,
   RiBookOpenLine,
   RiBuilding2Line,
   RiCpuLine,
@@ -98,7 +99,10 @@ export const SETTINGS_NAV: { label: string; items: SettingsNavItem[] }[] = [
   },
   {
     label: "Preferences",
-    items: [{ href: "/settings/appearance", label: "Appearance", icon: RiPaletteLine }],
+    items: [
+      { href: "/settings/appearance", label: "Appearance", icon: RiPaletteLine },
+      { href: "/settings/connected-apps", label: "Connected apps", icon: RiApps2Line },
+    ],
   },
 ];
 

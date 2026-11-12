@@ -48,6 +48,7 @@
     "@anthropic-ai/sdk": "^0.120.0",
     "@aws-sdk/client-s3": "^3.1142.0",
     "@aws-sdk/s3-request-presigner": "^3.1142.0",
+    "@better-auth/oauth-provider": "1.7.7",
     "@formulajs/formulajs": "^4.6.1",
     "@langfuse/client": "5.14.0",
     "@langfuse/otel": "5.14.0",

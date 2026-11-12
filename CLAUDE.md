@@ -203,6 +203,20 @@ functions rather than its own copy of the rules: leads go through
 checks), a stop through `stopCampaignLeads` (`sequence_completed`, not
 suppression). Keep request parsing pure in `requests.ts`, with tests.
 
+The same operations are an MCP server at `/api/v1/mcp` (`docs/mcp.mdx`):
+Streamable HTTP, stateless (a server and transport per request, JSON
+responses, so tools run inside `withApiKey`'s scope; GET/DELETE are 405),
+same API key. A REST route and its MCP tool both call
+`src/lib/publicApi/operations.ts`; `mcp.ts` only registers tools, takes the
+operations as an argument (tests stub them), and hides non-`PublicApiError`
+messages, because the SDK would otherwise return a thrown error's message to
+the model. A new public operation gets its route and its tool in the same
+change. Write operations call `assertCampaignWritesAllowed()` themselves:
+the campaign-mutation pause in `proxy.ts` matches by path, and
+`/api/v1/mcp` is not under `/api/v1/campaigns`. Keep `zod` at the version
+`@modelcontextprotocol/sdk` resolves to, or the SDK gets its own copy and
+tool schemas stop typechecking.
+
 ## Prompts live in Langfuse, and every AI call is traced
 
 Langfuse is an optional platform integration **per organization**

@@ -177,6 +177,7 @@
             "group": "Reference",
             "pages": [
               "api",
+              "mcp",
               "database",
               "multi-tenancy/conventions"
             ]

@@ -1,0 +1,67 @@
+---
+title: "MCP server"
+description: "Let an AI assistant list your email campaigns, add leads and stop a lead's sequence, with an API key."
+icon: "robot"
+---
+
+BraintreeSDR is also an [MCP](https://modelcontextprotocol.io) server, so an AI assistant such as Claude Code, Cursor or any other MCP client can work with your email campaigns. It can do what the [public API](/api) does, with the same key and the same rules. An assistant just calls tools instead of URLs.
+
+## Connect
+
+You need an API key. Owners and admins create one in **Settings, API keys**; name it after the assistant that will use it. The key acts for the whole organization, and **Revoke** stops it at once.
+
+The server's address is your site's address followed by `/api/v1/mcp`. Settings, API keys shows the full address. It speaks Streamable HTTP and expects the key as `Authorization: Bearer <key>`.
+
+### Claude Code
+
+```sh
+claude mcp add --transport http braintreesdr https://agentsdr.example.com/api/v1/mcp \
+  --header "Authorization: Bearer asdr_..."
+```
+
+### Cursor
+
+In `.cursor/mcp.json` (one project) or `~/.cursor/mcp.json` (every project):
+
+```json
+{
+  "mcpServers": {
+    "braintreesdr": {
+      "url": "https://agentsdr.example.com/api/v1/mcp",
+      "headers": { "Authorization": "Bearer asdr_..." }
+    }
+  }
+}
+```
+
+### Other clients
+
+Any client that can reach a Streamable HTTP server with a custom header works. A client that only runs local (stdio) servers can go through [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+
+```sh
+npx mcp-remote https://agentsdr.example.com/api/v1/mcp --header "Authorization: Bearer asdr_..."
+```
+
+Clients that connect only through OAuth, such as custom connectors on claude.ai, cannot connect yet, because the server accepts API keys only.
+
+## Tools
+
+| Tool | What it does | Same as |
+|---|---|---|
+| `list_campaigns` | The organization's email campaigns, newest first: id, name, status, created. Read-only. | `GET /api/v1/campaigns` |
+| `add_leads_to_campaign` | Adds up to 500 leads to a campaign. | `POST /api/v1/campaigns/:id/leads` |
+| `stop_campaign_leads` | Ends a campaign's sequence for up to 500 leads, by email. | `POST /api/v1/campaigns/:id/leads/stop` |
+
+The rules and the results are the ones in the [public API](/api):
+
+- Adding leads works like importing a sheet. A lead already in the campaign or a suppressed address is skipped and counted, so the same call twice is safe. An invalid email is reported in `failed` and the rest are still added. Extra fields go in `customFields` and become merge fields (`{{productName}}`). Any other field is refused by name, so a misspelt one is caught instead of silently missing from the email.
+- Stopping a lead ends their sequence as if it had run out. It is not an unsubscribe: they can still be added to a later campaign. Stopping twice is harmless.
+- When something is wrong with the input, the tool answers with an error that names the field at fault, and the assistant can fix the call and try again. An id that is not one of your campaigns is "Campaign not found".
+
+Each result comes as structured content and as JSON text, for clients that show only text.
+
+## Notes
+
+- The server keeps no session between requests, so a client never needs to reconnect after a deployment. It answers `GET` and `DELETE` with `405`: there is no event stream to open and no session to end.
+- While `PAUSE_CAMPAIGN_MUTATIONS` (or `PEOPLE_MIGRATION_MODE`) is on, adding and stopping leads are refused, the same as through the REST API. Listing still works.
+- The public demo refuses the MCP server altogether.

@@ -1,3 +1,4 @@
+import { migrationMutationBlockReason } from "@/lib/migration/controls";
 import type { ParsedRow } from "@/lib/outreach/leadImport";
 
 /**
@@ -15,6 +16,26 @@ export class PublicApiError extends Error {
     super(message);
     this.name = "PublicApiError";
   }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A campaign id from the path or a tool's arguments. Anything that is not a uuid is a 404, like an unknown id. */
+export function campaignIdParam(id: string): string {
+  if (!UUID.test(id)) throw new PublicApiError(404, "Campaign not found");
+  return id;
+}
+
+/**
+ * Refuses a lead import or stop while campaign changes are paused
+ * (PAUSE_CAMPAIGN_MUTATIONS, PEOPLE_MIGRATION_MODE). proxy.ts already refuses
+ * POSTs under /api/v1/campaigns, but it matches by path, and the MCP tools
+ * arrive at /api/v1/mcp. The write operations check it themselves, so the
+ * pause holds whichever way the request comes in.
+ */
+export function assertCampaignWritesAllowed(env: Record<string, string | undefined> = process.env): void {
+  const reason = migrationMutationBlockReason("/api/v1/campaigns", "POST", env);
+  if (reason) throw new PublicApiError(503, reason);
 }
 
 export const MAX_LEADS_PER_REQUEST = 500;

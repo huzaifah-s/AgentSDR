@@ -36,11 +36,3 @@ export async function jsonBody(request: Request): Promise<unknown> {
     throw new PublicApiError(400, "The body must be JSON (Content-Type: application/json)");
   }
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** A campaign id from the path. Anything that is not a uuid is a 404, like an unknown id. */
-export function campaignIdParam(id: string): string {
-  if (!UUID.test(id)) throw new PublicApiError(404, "Campaign not found");
-  return id;
-}

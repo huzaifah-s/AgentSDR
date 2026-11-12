@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useSyncExternalStore, type FormEvent } from "react";
 import * as Button from "@/components/alignui/button";
 import * as Input from "@/components/alignui/input";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import { useDialogs } from "@/components/DialogProvider";
 import { Callout } from "@/components/settings/SettingsKit";
 import type { ApiKeySummary } from "@/lib/publicApi/keys";
+
+const noSubscription = () => () => {};
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
@@ -85,11 +87,20 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
     }
   }
 
+  // The MCP address uses this site's own origin; the server render has none, so it matches.
+  const origin = useSyncExternalStore(noSubscription, () => window.location.origin, () => "");
+
   return (
     <div className="flex flex-col gap-6">
       <Callout tone="info">
-        A key acts for the whole organization: it can list email campaigns, add leads to them and stop a
-        lead&apos;s sequence. Send it as <code>Authorization: Bearer &lt;key&gt;</code> to <code>/api/v1/</code>.
+        <p>
+          A key acts for the whole organization: it can list email campaigns, add leads to them and stop a
+          lead&apos;s sequence. Send it as <code>Authorization: Bearer &lt;key&gt;</code> to <code>/api/v1/</code>.
+        </p>
+        <p className="mt-2">
+          AI assistants (Claude Code, Cursor, any MCP client) can use the same key as an MCP server at{" "}
+          <code className="break-all">{origin}/api/v1/mcp</code>.
+        </p>
       </Callout>
       {error && <Callout tone="error">{error}</Callout>}
 

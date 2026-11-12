@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_LEADS_PER_REQUEST, PublicApiError, parseLeadsRequest, parseStopRequest } from "./requests";
+import { MAX_LEADS_PER_REQUEST, PublicApiError, assertCampaignWritesAllowed, parseLeadsRequest, parseStopRequest } from "./requests";
 
 function refusal(fn: () => unknown): string {
   try {
@@ -74,4 +74,23 @@ describe("parseStopRequest", () => {
     expect(refusal(() => parseStopRequest({ emails: ["a@b.co", 3] }))).toContain("emails[1]");
     expect(refusal(() => parseStopRequest({ emails: ["  "] }))).toContain("emails[0]");
   });
+});
+
+describe("assertCampaignWritesAllowed", () => {
+  test("passes when nothing is paused", () => {
+    expect(() => assertCampaignWritesAllowed({})).not.toThrow();
+  });
+
+  for (const env of [{ PAUSE_CAMPAIGN_MUTATIONS: "true" }, { PEOPLE_MIGRATION_MODE: "1" }]) {
+    test(`is a 503 under ${Object.keys(env)[0]}`, () => {
+      try {
+        assertCampaignWritesAllowed(env);
+      } catch (error) {
+        expect(error).toBeInstanceOf(PublicApiError);
+        expect((error as PublicApiError).status).toBe(503);
+        return;
+      }
+      throw new Error("expected a 503");
+    });
+  }
 });

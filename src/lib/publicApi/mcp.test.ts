@@ -4,8 +4,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { currentOrganizationId, runInOrganization } from "@/lib/tenancy/scope";
+import { scopesForKeyAccess } from "./access";
 import { buildMcpServer, toolError, toolResult, type PublicApiOperations } from "./mcp";
-import { PublicApiError, campaignIdParam, parseLeadsRequest, parseStopRequest } from "./requests";
+import { PublicApiError, campaignIdParam, parseActionRequiredQuery, parseLeadsRequest, parseLookupEmails, parseStopRequest } from "./requests";
 
 const CAMPAIGN = "0b6a3c1e-1111-4222-8333-444455556666";
 
@@ -19,6 +20,26 @@ function stubOperations(overrides: Partial<PublicApiOperations> = {}) {
     async listCampaigns() {
       calls.push({ op: "listCampaigns" });
       return { campaigns: [{ id: CAMPAIGN, name: "Launch", status: "active", createdAt: "2026-11-05T09:30:00.000Z" }] };
+    },
+    async getCampaignDetail(campaignId) {
+      calls.push({ op: "getCampaignDetail", campaignId });
+      campaignIdParam(campaignId);
+      return {
+        id: campaignId, name: "Launch", status: "active", createdAt: null, steps: 3,
+        leads: { total: 2, pending: 1, inSequence: 1, replied: 0, completed: 0, bounced: 0, suppressed: 0 },
+        emails: { sent: 1, scheduled: 1, failed: 0 },
+      };
+    },
+    async getCampaignLeads(campaignId, emails) {
+      calls.push({ op: "getCampaignLeads", campaignId, body: emails });
+      campaignIdParam(campaignId);
+      const wanted = parseLookupEmails(emails);
+      return { leads: [], notFound: wanted };
+    },
+    async listActionRequired(query) {
+      calls.push({ op: "listActionRequired", body: query });
+      const { limit, offset } = parseActionRequiredQuery(query);
+      return { items: [], total: 0, limit, offset, nextOffset: null };
     },
     async addLeads(campaignId, body) {
       calls.push({ op: "addLeads", campaignId, body });
@@ -36,8 +57,10 @@ function stubOperations(overrides: Partial<PublicApiOperations> = {}) {
   return { ops, calls };
 }
 
-async function connect(ops: PublicApiOperations) {
-  const server = buildMcpServer(ops);
+const READ_WRITE = scopesForKeyAccess("read_write");
+
+async function connect(ops: PublicApiOperations, scopes = READ_WRITE) {
+  const server = buildMcpServer(ops, scopes);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "1.0.0" });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -82,16 +105,60 @@ describe("tool results", () => {
 });
 
 describe("MCP server", () => {
-  test("lists the three tools with their annotations", async () => {
+  test("a read-and-write key lists every tool, with their annotations", async () => {
     const client = await connect(stubOperations().ops);
     const { tools } = await client.listTools();
     const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
-    expect(Object.keys(byName).sort()).toEqual(["add_leads_to_campaign", "list_campaigns", "stop_campaign_leads"]);
+    expect(Object.keys(byName).sort()).toEqual([
+      "add_leads_to_campaign", "get_campaign", "get_campaign_leads", "list_action_required", "list_campaigns", "stop_campaign_leads",
+    ]);
+    for (const name of ["get_campaign", "get_campaign_leads", "list_action_required"]) expect(byName[name].annotations?.readOnlyHint).toBe(true);
     expect(byName.list_campaigns.annotations?.readOnlyHint).toBe(true);
     expect(byName.add_leads_to_campaign.annotations?.destructiveHint).toBe(false);
     expect(byName.stop_campaign_leads.annotations?.destructiveHint).toBe(true);
     expect(byName.stop_campaign_leads.annotations?.idempotentHint).toBe(true);
     expect(byName.add_leads_to_campaign.inputSchema.required).toEqual(["campaignId", "leads"]);
+  });
+
+  test("a read-only key sees only the read tools, and is told it is read-only", async () => {
+    const client = await connect(stubOperations().ops, scopesForKeyAccess("read"));
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["get_campaign", "get_campaign_leads", "list_action_required", "list_campaigns"]);
+    expect(client.getInstructions()).toContain("read-only");
+    const result = await client.callTool({ name: "add_leads_to_campaign", arguments: { campaignId: CAMPAIGN, leads: [{ email: "a@example.com" }] } });
+    expect(result.isError).toBe(true);
+  });
+
+  test("only the CRM tool for a token with crm:read alone", async () => {
+    const client = await connect(stubOperations().ops, new Set(["crm:read"] as const));
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).toEqual(["list_action_required"]);
+  });
+
+  test("get_campaign returns the campaign's numbers", async () => {
+    const client = await connect(stubOperations().ops);
+    const result = await client.callTool({ name: "get_campaign", arguments: { campaignId: CAMPAIGN } });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ id: CAMPAIGN, steps: 3, leads: { total: 2 } });
+  });
+
+  test("get_campaign_leads hands the emails to the operation", async () => {
+    const { ops, calls } = stubOperations();
+    const client = await connect(ops);
+    const result = await client.callTool({ name: "get_campaign_leads", arguments: { campaignId: CAMPAIGN, emails: ["A@Example.com"] } });
+    expect(calls).toEqual([{ op: "getCampaignLeads", campaignId: CAMPAIGN, body: ["A@Example.com"] }]);
+    expect(result.structuredContent).toEqual({ leads: [], notFound: ["a@example.com"] });
+  });
+
+  test("list_action_required passes its filters, and an unknown group is refused", async () => {
+    const { ops, calls } = stubOperations();
+    const client = await connect(ops);
+    const result = await client.callTool({ name: "list_action_required", arguments: { group: "reply", limit: 5 } });
+    expect(result.isError).toBeFalsy();
+    expect(calls).toEqual([{ op: "listActionRequired", body: { group: "reply", limit: 5 } }]);
+    expect(result.structuredContent).toEqual({ items: [], total: 0, limit: 5, offset: 0, nextOffset: null });
+    const bad = await client.callTool({ name: "list_action_required", arguments: { group: "everything" } });
+    expect(bad.isError).toBe(true);
   });
 
   test("list_campaigns returns the operation's body", async () => {
@@ -175,7 +242,7 @@ describe("HTTP transport inside an organization scope", () => {
     });
 
     async function post(body: unknown): Promise<Response> {
-      const server = buildMcpServer(ops);
+      const server = buildMcpServer(ops, READ_WRITE);
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await server.connect(transport);
       try {

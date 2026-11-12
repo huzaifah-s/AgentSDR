@@ -211,7 +211,12 @@ same API key. A REST route and its MCP tool both call
 operations as an argument (tests stub them), and hides non-`PublicApiError`
 messages, because the SDK would otherwise return a thrown error's message to
 the model. A new public operation gets its route and its tool in the same
-change. Write operations call `assertCampaignWritesAllowed()` themselves:
+change. Access is by scope (`campaigns:read`, `campaigns:write`,
+`crm:read`; `src/lib/publicApi/access.ts`): a key's `access` (`read` /
+`read_write`) stands for a fixed set, a REST route passes
+`withApiKey(…, { scope })` (403 without it), and the MCP server registers
+only the tools the caller's scopes allow. Write operations call
+`assertCampaignWritesAllowed()` themselves:
 the campaign-mutation pause in `proxy.ts` matches by path, and
 `/api/v1/mcp` is not under `/api/v1/campaigns`. Keep `zod` at the version
 `@modelcontextprotocol/sdk` resolves to, or the SDK gets its own copy and

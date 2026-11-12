@@ -193,7 +193,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     .innerJoin(people, eq(people.id, crmRecords.personId))
     .where(where).orderBy(...orderBy).limit(limit).offset(offset);
   const [rows, totals, messages, classifications, runs, drafts, policies, stageCounts, lastRuns] = await Promise.all([
-    db.select({ record: crmRecords, person: personListColumns, company: companies, subcategory: crmSubcategories, stage: pipelineStage })
+    db.select({ record: crmRecords, person: personListColumns, company: companies, subcategory: crmSubcategories, stage: pipelineStage, actionGroup })
       .from(crmRecords)
       .innerJoin(people, eq(people.id, crmRecords.personId))
       .leftJoin(companies, eq(companies.id, people.companyId))

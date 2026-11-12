@@ -1,8 +1,24 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { AddLeadsResult, ListCampaignsResult, StopLeadsResult } from "./operations";
-import { MAX_EMAILS_PER_STOP, MAX_LEADS_PER_REQUEST, PublicApiError } from "./requests";
+import type { ApiScope } from "./access";
+import { CRM_ACTION_GROUPS } from "@/lib/crm/actionGroups";
+import type {
+  ActionRequiredResult,
+  AddLeadsResult,
+  CampaignDetail,
+  CampaignLeadsResult,
+  ListCampaignsResult,
+  StopLeadsResult,
+} from "./operations";
+import {
+  DEFAULT_ACTIONS_PER_PAGE,
+  MAX_ACTIONS_PER_PAGE,
+  MAX_EMAILS_PER_LOOKUP,
+  MAX_EMAILS_PER_STOP,
+  MAX_LEADS_PER_REQUEST,
+  PublicApiError,
+} from "./requests";
 
 /**
  * The public API as MCP tools, served at /api/v1/mcp
@@ -13,6 +29,10 @@ import { MAX_EMAILS_PER_STOP, MAX_LEADS_PER_REQUEST, PublicApiError } from "./re
  * The operations come in as an argument, so this file stays free of the
  * database and its tests run against stubs.
  *
+ * A tool is registered only when the caller's scopes allow it
+ * (src/lib/publicApi/access.ts): a read-only key does not see the write
+ * tools, rather than seeing tools that always fail.
+ *
  * The zod input schemas are there for the client and the model to read.
  * They do not decide what is valid: the operations parse their input again
  * with requests.ts, which is the authority. Lead objects are loose for that
@@ -22,17 +42,31 @@ import { MAX_EMAILS_PER_STOP, MAX_LEADS_PER_REQUEST, PublicApiError } from "./re
 
 export type PublicApiOperations = {
   listCampaigns(): Promise<ListCampaignsResult>;
+  getCampaignDetail(campaignId: string): Promise<CampaignDetail>;
+  getCampaignLeads(campaignId: string, emails: unknown): Promise<CampaignLeadsResult>;
+  listActionRequired(query: { group?: unknown; limit?: unknown; offset?: unknown }): Promise<ActionRequiredResult>;
   addLeads(campaignId: string, body: unknown): Promise<AddLeadsResult>;
   stopLeads(campaignId: string, body: unknown): Promise<StopLeadsResult>;
 };
 
 export const MCP_SERVER_NAME = "agentsdr";
 
-const INSTRUCTIONS = [
-  "Works with one organization's email campaigns in BraintreeSDR: list them, add leads, and stop a lead's sequence.",
-  "Call list_campaigns first to find a campaign's id.",
-  "Adding leads follows the same rules as a sheet import: suppressed addresses and leads already in the campaign are skipped, and the result counts each.",
-].join(" ");
+function instructions(scopes: ReadonlySet<ApiScope>): string {
+  const canWrite = scopes.has("campaigns:write");
+  return [
+    canWrite
+      ? "Works with one organization's email campaigns in BraintreeSDR: see them and their leads, add leads, and stop a lead's sequence."
+      : "Reads one organization's email campaigns in BraintreeSDR. This connection is read-only: it cannot add or stop leads.",
+    scopes.has("campaigns:read") ? "Call list_campaigns first to find a campaign's id." : "",
+    scopes.has("crm:read") ? "list_action_required shows the CRM queue of leads waiting on a person: replies to review, follow-ups due, problems." : "",
+    canWrite
+      ? "Adding leads follows the same rules as a sheet import: suppressed addresses and leads already in the campaign are skipped, and the result counts each."
+      : "",
+  ].filter(Boolean).join(" ");
+}
+
+const LEAD_STATUS_HELP =
+  "status: pending (not emailed yet), initial_sent / in_follow_up (in the sequence), reply_processing / reply_received (they replied), sequence_completed (every step sent, or stopped), bounced, suppressed.";
 
 const text = z.string().nullish();
 
@@ -72,6 +106,56 @@ const addLeadsOutput = {
     .describe("Leads that could not be added, by their index in the request"),
 };
 
+const campaignDetailOutput = {
+  ...campaignSummarySchema.shape,
+  steps: z.number().describe("Steps in the sequence"),
+  leads: z.object({
+    total: z.number(),
+    pending: z.number().describe("Not emailed yet"),
+    inSequence: z.number().describe("Emailed, with steps still to go"),
+    replied: z.number(),
+    completed: z.number().describe("Every step sent, or stopped"),
+    bounced: z.number(),
+    suppressed: z.number(),
+  }),
+  emails: z.object({ sent: z.number(), scheduled: z.number(), failed: z.number() }),
+};
+
+const campaignLeadsOutput = {
+  leads: z.array(
+    z.object({
+      email: z.string(),
+      status: z.string(),
+      emailsSent: z.number(),
+      lastSentAt: z.string().nullable(),
+      nextSendAt: z.string().nullable(),
+      addedAt: z.string().nullable(),
+    }),
+  ),
+  notFound: z.array(z.string()).describe("Emails that are not leads of this campaign"),
+};
+
+const actionRequiredOutput = {
+  items: z.array(
+    z.object({
+      recordId: z.string(),
+      person: z.object({ name: z.string().nullable(), email: z.string().nullable(), company: z.string().nullable() }),
+      channel: z.string().nullable(),
+      action: z.string().describe("What to do, e.g. Reply review, Due follow-up"),
+      group: z.string().nullable(),
+      groupLabel: z.string().nullable(),
+      dueAt: z.string().nullable(),
+      category: z.string().nullable(),
+      latestReply: z.object({ at: z.string().nullable(), excerpt: z.string() }).nullable(),
+      draft: z.object({ status: z.string(), channel: z.string(), subject: z.string().nullable() }).nullable(),
+    }),
+  ),
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+  nextOffset: z.number().nullable().describe("Pass as offset for the next page; null on the last page"),
+};
+
 const stopLeadsOutput = {
   stopped: z.number().describe("Leads whose sequence was running and is now ended"),
   alreadyEnded: z.number().describe("Leads whose sequence had already ended"),
@@ -107,11 +191,11 @@ async function run(tool: string, fn: () => Promise<object>): Promise<CallToolRes
   }
 }
 
-/** A server with the public API's tools. Build one per request: the endpoint is stateless. */
-export function buildMcpServer(ops: PublicApiOperations): McpServer {
-  const server = new McpServer({ name: MCP_SERVER_NAME, title: "BraintreeSDR", version: "1.0.0" }, { instructions: INSTRUCTIONS });
+/** A server with the tools `scopes` allow. Build one per request: the endpoint is stateless. */
+export function buildMcpServer(ops: PublicApiOperations, scopes: ReadonlySet<ApiScope>): McpServer {
+  const server = new McpServer({ name: MCP_SERVER_NAME, title: "BraintreeSDR", version: "1.0.0" }, { instructions: instructions(scopes) });
 
-  server.registerTool(
+  if (scopes.has("campaigns:read")) server.registerTool(
     "list_campaigns",
     {
       title: "List email campaigns",
@@ -122,7 +206,53 @@ export function buildMcpServer(ops: PublicApiOperations): McpServer {
     () => run("list_campaigns", () => ops.listCampaigns()),
   );
 
-  server.registerTool(
+  if (scopes.has("campaigns:read")) server.registerTool(
+    "get_campaign",
+    {
+      title: "Get a campaign",
+      description: "One email campaign with its numbers: leads by status (pending, in sequence, replied, completed, bounced, suppressed) and emails sent, scheduled and failed.",
+      inputSchema: { campaignId },
+      outputSchema: campaignDetailOutput,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    ({ campaignId }) => run("get_campaign", () => ops.getCampaignDetail(campaignId)),
+  );
+
+  if (scopes.has("campaigns:read")) server.registerTool(
+    "get_campaign_leads",
+    {
+      title: "Look up leads in a campaign",
+      description: `Where up to ${MAX_EMAILS_PER_LOOKUP} people stand in an email campaign, by email: their status, emails sent, the last and next send. ${LEAD_STATUS_HELP}`,
+      inputSchema: {
+        campaignId,
+        emails: z.array(z.string()).min(1).max(MAX_EMAILS_PER_LOOKUP).describe("The leads' email addresses"),
+      },
+      outputSchema: campaignLeadsOutput,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    ({ campaignId, emails }) => run("get_campaign_leads", () => ops.getCampaignLeads(campaignId, emails)),
+  );
+
+  if (scopes.has("crm:read")) server.registerTool(
+    "list_action_required",
+    {
+      title: "List CRM Action required",
+      description: [
+        "The CRM's Action required queue, newest activity first: leads waiting on a person, with what to do, the channel, when it is due and the first lines of their latest reply.",
+        `Pages of up to ${MAX_ACTIONS_PER_PAGE} (default ${DEFAULT_ACTIONS_PER_PAGE}); pass nextOffset back as offset for the next page.`,
+      ].join(" "),
+      inputSchema: {
+        group: z.enum(CRM_ACTION_GROUPS).optional().describe("reply (immediate reply), follow_up (follow-up due), classification (confirm classification), next_step (needs a next step), problem (error or failed)"),
+        limit: z.number().int().min(1).max(MAX_ACTIONS_PER_PAGE).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
+      outputSchema: actionRequiredOutput,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (query) => run("list_action_required", () => ops.listActionRequired(query)),
+  );
+
+  if (scopes.has("campaigns:write")) server.registerTool(
     "add_leads_to_campaign",
     {
       title: "Add leads to a campaign",
@@ -141,7 +271,7 @@ export function buildMcpServer(ops: PublicApiOperations): McpServer {
     ({ campaignId, leads }) => run("add_leads_to_campaign", () => ops.addLeads(campaignId, { leads })),
   );
 
-  server.registerTool(
+  if (scopes.has("campaigns:write")) server.registerTool(
     "stop_campaign_leads",
     {
       title: "Stop leads' sequence",

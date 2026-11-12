@@ -1,3 +1,4 @@
+import { CRM_ACTION_GROUPS, isCrmActionGroup, type CrmActionGroup } from "@/lib/crm/actionGroups";
 import { migrationMutationBlockReason } from "@/lib/migration/controls";
 import type { ParsedRow } from "@/lib/outreach/leadImport";
 
@@ -134,4 +135,47 @@ export function parseStopRequest(body: unknown): string[] {
     if (typeof email !== "string" || !email.trim()) throw new PublicApiError(400, `emails[${index}] must be an email address`);
     return email.trim().toLowerCase();
   });
+}
+
+export const MAX_EMAILS_PER_LOOKUP = 100;
+
+/**
+ * The addresses to look up in a campaign: `["a@example.com", ...]`, trimmed
+ * and lowercased. REST reads them from `?email=` (repeated, or
+ * comma-separated); the MCP tool passes its list.
+ */
+export function parseLookupEmails(emails: unknown): string[] {
+  if (!Array.isArray(emails) || emails.length === 0) throw new PublicApiError(400, "Give at least one email (?email=a@example.com)");
+  const split = emails.flatMap((email, index) => {
+    if (typeof email !== "string") throw new PublicApiError(400, `emails[${index}] must be an email address`);
+    return email.split(",").map((part) => part.trim().toLowerCase()).filter(Boolean);
+  });
+  if (split.length === 0) throw new PublicApiError(400, "Give at least one email (?email=a@example.com)");
+  if (split.length > MAX_EMAILS_PER_LOOKUP) throw new PublicApiError(400, `At most ${MAX_EMAILS_PER_LOOKUP} emails per lookup`);
+  return split;
+}
+
+export const DEFAULT_ACTIONS_PER_PAGE = 20;
+export const MAX_ACTIONS_PER_PAGE = 50;
+
+export type ActionRequiredQuery = { group?: CrmActionGroup; limit: number; offset: number };
+
+/** `{ group?, limit?, offset? }` for the Action required queue, from query parameters or tool arguments. */
+export function parseActionRequiredQuery(input: { group?: unknown; limit?: unknown; offset?: unknown }): ActionRequiredQuery {
+  const group = input.group === undefined || input.group === null || input.group === "" ? undefined : input.group;
+  if (group !== undefined && (typeof group !== "string" || !isCrmActionGroup(group))) {
+    throw new PublicApiError(400, `group must be one of ${CRM_ACTION_GROUPS.join(", ")}`);
+  }
+  const limit = wholeNumber(input.limit, "limit", DEFAULT_ACTIONS_PER_PAGE);
+  if (limit < 1 || limit > MAX_ACTIONS_PER_PAGE) throw new PublicApiError(400, `limit must be between 1 and ${MAX_ACTIONS_PER_PAGE}`);
+  const offset = wholeNumber(input.offset, "offset", 0);
+  if (offset < 0) throw new PublicApiError(400, "offset must be 0 or more");
+  return { group, limit, offset };
+}
+
+function wholeNumber(value: unknown, field: string, fallback: number): number {
+  if (value === undefined || value === null || value === "") return fallback;
+  const number = typeof value === "number" ? value : typeof value === "string" && /^-?\d+$/.test(value.trim()) ? Number(value) : NaN;
+  if (!Number.isInteger(number)) throw new PublicApiError(400, `${field} must be a whole number`);
+  return number;
 }

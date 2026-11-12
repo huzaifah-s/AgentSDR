@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_LEADS_PER_REQUEST, PublicApiError, assertCampaignWritesAllowed, parseLeadsRequest, parseStopRequest } from "./requests";
+import {
+  MAX_EMAILS_PER_LOOKUP,
+  MAX_LEADS_PER_REQUEST,
+  PublicApiError,
+  assertCampaignWritesAllowed,
+  parseActionRequiredQuery,
+  parseLeadsRequest,
+  parseLookupEmails,
+  parseStopRequest,
+} from "./requests";
 
 function refusal(fn: () => unknown): string {
   try {
@@ -93,4 +102,36 @@ describe("assertCampaignWritesAllowed", () => {
       throw new Error("expected a 503");
     });
   }
+});
+
+describe("parseLookupEmails", () => {
+  test("repeated and comma-separated addresses, trimmed and lowercased", () => {
+    expect(parseLookupEmails(["A@Example.com", " b@example.com , c@example.com "])).toEqual(["a@example.com", "b@example.com", "c@example.com"]);
+  });
+
+  test("none is refused, and so is too many", () => {
+    expect(refusal(() => parseLookupEmails([]))).toContain("at least one email");
+    expect(refusal(() => parseLookupEmails([" , "]))).toContain("at least one email");
+    const many = Array.from({ length: MAX_EMAILS_PER_LOOKUP + 1 }, (_, i) => `p${i}@example.com`);
+    expect(refusal(() => parseLookupEmails(many))).toContain(`At most ${MAX_EMAILS_PER_LOOKUP}`);
+  });
+});
+
+describe("parseActionRequiredQuery", () => {
+  test("defaults", () => {
+    expect(parseActionRequiredQuery({})).toEqual({ group: undefined, limit: 20, offset: 0 });
+  });
+
+  test("query-string values and tool numbers read the same", () => {
+    expect(parseActionRequiredQuery({ group: "reply", limit: "5", offset: "10" })).toEqual({ group: "reply", limit: 5, offset: 10 });
+    expect(parseActionRequiredQuery({ group: "problem", limit: 5, offset: 10 })).toEqual({ group: "problem", limit: 5, offset: 10 });
+  });
+
+  test("an unknown group, a limit out of range and a fraction are refused", () => {
+    expect(refusal(() => parseActionRequiredQuery({ group: "everything" }))).toContain("group must be one of");
+    expect(refusal(() => parseActionRequiredQuery({ limit: "51" }))).toContain("limit must be between 1 and 50");
+    expect(refusal(() => parseActionRequiredQuery({ limit: "0" }))).toContain("limit must be between");
+    expect(refusal(() => parseActionRequiredQuery({ offset: "1.5" }))).toBe("offset must be a whole number");
+    expect(refusal(() => parseActionRequiredQuery({ offset: -1 }))).toBe("offset must be 0 or more");
+  });
 });

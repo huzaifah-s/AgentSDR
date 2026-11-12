@@ -3,9 +3,11 @@
 import { useState, useSyncExternalStore, type FormEvent } from "react";
 import * as Button from "@/components/alignui/button";
 import * as Input from "@/components/alignui/input";
+import * as Select from "@/components/alignui/select";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import { useDialogs } from "@/components/DialogProvider";
 import { Callout } from "@/components/settings/SettingsKit";
+import { API_KEY_ACCESS, API_KEY_ACCESS_LABELS, type ApiKeyAccess } from "@/lib/publicApi/access";
 import type { ApiKeySummary } from "@/lib/publicApi/keys";
 
 const noSubscription = () => () => {};
@@ -25,6 +27,7 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
   const dialogs = useDialogs();
   const [keys, setKeys] = useState(initialKeys);
   const [name, setName] = useState("");
+  const [access, setAccess] = useState<ApiKeyAccess>("read_write");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{ key: string; name: string } | null>(null);
@@ -39,7 +42,7 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
       const res = await fetch("/api/settings/api-keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), access }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) return setError(data?.error || "Could not create the key.");
@@ -47,6 +50,7 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
       setCreated({ key: data.key as string, name: (data.apiKey as ApiKeySummary).name });
       setCopied(false);
       setName("");
+      setAccess("read_write");
     } catch {
       setError("Network error. Try again.");
     } finally {
@@ -94,8 +98,9 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
     <div className="flex flex-col gap-6">
       <Callout tone="info">
         <p>
-          A key acts for the whole organization: it can list email campaigns, add leads to them and stop a
-          lead&apos;s sequence. Send it as <code>Authorization: Bearer &lt;key&gt;</code> to <code>/api/v1/</code>.
+          A key acts for the whole organization. A read-only key can see email campaigns, their leads&apos; status
+          and the CRM&apos;s Action required queue; a read-and-write key can also add leads and stop a lead&apos;s
+          sequence. Send it as <code>Authorization: Bearer &lt;key&gt;</code> to <code>/api/v1/</code>.
         </p>
         <p className="mt-2">
           AI assistants (Claude Code, Cursor, any MCP client) can use the same key as an MCP server at{" "}
@@ -141,6 +146,18 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
                 />
               </Input.Wrapper>
             </Input.Root>
+            <Select.Root size="small" value={access} onValueChange={(value) => setAccess(value as ApiKeyAccess)}>
+              <Select.Trigger className="sm:w-44" aria-label="Access">
+                <Select.Value />
+              </Select.Trigger>
+              <Select.Content>
+                {API_KEY_ACCESS.map((option) => (
+                  <Select.Item key={option} value={option}>
+                    {API_KEY_ACCESS_LABELS[option]}
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
             <Button.Root type="submit" variant="primary" mode="filled" size="small" disabled={busy === "create" || !name.trim()}>
               {busy === "create" ? "Creating…" : "Create key"}
             </Button.Root>
@@ -163,7 +180,7 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
                       {key.revokedAt && <span className="ml-2 text-paragraph-xs text-text-soft-400">Revoked</span>}
                     </p>
                     <p className="text-paragraph-xs text-text-sub-600">
-                      <code>{key.keyPrefix}…</code> · Created {when(key.createdAt)} · Last used {when(key.lastUsedAt)}
+                      <code>{key.keyPrefix}…</code> · {API_KEY_ACCESS_LABELS[key.access]} · Created {when(key.createdAt)} · Last used {when(key.lastUsedAt)}
                     </p>
                   </div>
                   {!key.revokedAt && (

@@ -155,16 +155,86 @@ registry.
 - **Body size**: a 500-lead call is well under Next.js's default limit for a
   route handler body. No configuration is needed.
 
-## Phase 2 (not in this change)
+## Phase 2: design (12 Nov 2026)
 
-- **OAuth**, so claude.ai custom connectors and other OAuth-only clients can
-  connect without pasting a key: `/.well-known/oauth-protected-resource`,
-  `resource_metadata` in the 401's `WWW-Authenticate`, and an authorization
-  server. Better Auth's MCP / OIDC provider plugin is the first thing to
-  evaluate; a token from it would resolve to (user, organization) and then
-  to the same `runInOrganization`. Membership checks apply, because a token
-  acts as a person, not an organization key.
-- **More tools, read-only first**: a campaign's stats, one lead's status in a
-  campaign, and CRM Action required. Each one gets its REST endpoint first,
-  so the two front doors stay level.
-- **Key scopes** (read-only vs. write), useful once an assistant holds a key.
+Three pieces, each in its own commit, in this order: the smaller two make
+OAuth tokens simpler to describe, because a token's scopes reuse what keys
+can do.
+
+### 1. Read-only keys
+
+- `api_keys.access`: `read` or `read_write`, `NOT NULL DEFAULT 'read_write'`
+  (`scripts/add-api-key-access.ts`). Every existing key could already write,
+  so the default keeps them as they are.
+- Settings → API keys: the create form asks "Read and write" (default) or
+  "Read only", and the list shows each key's access.
+- `withApiKey` hands the handler its caller `{ organizationId, keyId,
+  access }`. A REST write route asks for `write` and a read-only key gets
+  `403`. The MCP route builds its server with only the tools the caller may
+  use, so a read-only key does not see the write tools at all (and the
+  server instructions say so) instead of seeing tools that always fail.
+
+### 2. Read-only tools, each with its REST twin
+
+| Tool | REST | Built on |
+|---|---|---|
+| `get_campaign` | `GET /api/v1/campaigns/:id` | `getCampaign` + `getCampaignStats` (lead counts by status, emails sent/scheduled/failed) |
+| `get_campaign_leads` | `GET /api/v1/campaigns/:id/leads?email=…` (up to 100, repeatable) | `outreach_leads` joined to `people`: each address's sequence status, step, next send |
+| `list_action_required` | `GET /api/v1/crm/action-required?group=&limit=&offset=` | `listCrmActions` (the CRM's Action required queue), mapped to a compact item: record id, person and company, channel, action, group, due time, category, the latest reply's excerpt, the pending draft's status |
+
+The output is compact on purpose: names, statuses, counts and short
+excerpts, not whole threads. A model reads every field of every row.
+
+### 3. OAuth, for connectors that cannot hold a key
+
+`@better-auth/oauth-provider` 1.7.7 (Better Auth's own, matching our
+1.7.7), with opaque access tokens (`disableJwtPlugin`, so no signing keys to
+manage).
+
+- **Who and which organization.** A token acts as a person, inside one
+  organization they pick. The plugin's `postLogin` step sends a person with
+  more than one organization to `/oauth/organization`. `consentReferenceId`
+  is the organization they picked, after a membership check, so the consent
+  and every token carry it as `referenceId`.
+- **Scopes:** `campaigns:read`, `campaigns:write`, `crm:read`, plus
+  `offline_access` for refresh tokens. A key's `read` is `campaigns:read` +
+  `crm:read`; `read_write` adds `campaigns:write`. Tools are filtered by
+  scope, the same way they are filtered by a key's access.
+- **Per request:** `/api/v1/mcp` accepts either credential. An `asdr_` key
+  goes through `organizationForApiKey`; anything else is checked as an access
+  token (valid, not expired or revoked, issued for this resource). Then the
+  person must **still be a member** of the token's organization, checked on
+  every request, so removing someone from an organization cuts off their
+  connectors at once.
+- **Discovery:** `/.well-known/oauth-protected-resource` (pointing at
+  ourselves as the authorization server) and
+  `/.well-known/oauth-authorization-server`. Every 401 from `/api/v1/mcp`
+  carries `WWW-Authenticate: Bearer resource_metadata="…"`, which is how a
+  client finds them.
+- **Client registration:** open dynamic registration (RFC 7591), which
+  claude.ai and other MCP clients use to register themselves. This is safe
+  because a registered client gets nothing on its own: tokens need a signed-in
+  person's consent, codes need PKCE, and redirects must match what the client
+  registered.
+- **Pages:** the plugin sends people to `/sign-in` (which continues the
+  OAuth flow after signing in), `/oauth/organization` and `/oauth/consent`.
+  Consent names the client, the organization and, in plain words, what each
+  scope allows.
+- **Settings → Connected apps** lists the apps a person has authorized and
+  lets them revoke one.
+- **Tables:** the plugin's six (clients, resources, client resources,
+  access and refresh tokens, consents), created by
+  `scripts/create-oauth-provider-tables.ts` and described in
+  `src/lib/auth/schema.ts`. They are classified **global** in the tenancy
+  registry, like Better Auth's own tables: a token belongs to a person, and
+  its organization is checked against membership on each request, not
+  through a column filter.
+- **Public in `proxy.ts`:** `/.well-known/oauth-*` and the plugin's endpoints
+  under `/api/auth/oauth2/` (Better Auth's handler is already public).
+
+## Later (not planned)
+
+- More write tools (CRM: approve or send a draft, move a stage; LinkedIn;
+  calling). Each needs its own decisions about what an assistant may do
+  without a person looking, so none is designed yet.
+- Rate limits, if a client ever loops.

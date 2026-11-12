@@ -12,5 +12,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // The id is checked before the body is read, so a bad id is a 404 whatever the body.
     const id = campaignIdParam((await params).id);
     return NextResponse.json(await stopLeads(id, await jsonBody(req)));
-  });
+  }, { scope: "campaigns:write" });
 }

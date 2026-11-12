@@ -1,10 +1,10 @@
 ---
 title: "Public API"
-description: "Let another application add leads to your email campaigns and stop a lead's sequence, with an API key."
+description: "Let another application read your email campaigns and the CRM queue, add leads and stop a lead's sequence, with an API key."
 icon: "code"
 ---
 
-The public API lets another application work with your email campaigns: list them, add leads, and stop a lead's sequence when that person no longer needs follow-ups (for example, they signed up in your product). It is small on purpose and lives under `/api/v1/`.
+The public API lets another application work with your email campaigns: list them and read their numbers, add leads, look up where a lead stands, and stop a lead's sequence when that person no longer needs follow-ups (for example, they signed up in your product). It can also read the CRM's Action required queue. It is small on purpose and lives under `/api/v1/`.
 
 AI assistants can do the same through the [MCP server](/mcp), with the same keys.
 
@@ -14,6 +14,7 @@ Owners and admins create keys in **Settings, API keys**. Give each key the name 
 
 - The key is shown **once**, when you create it. Copy it into the other application's settings. AgentSDR stores only a hash of it, so a lost key cannot be shown again: revoke it and create a new one.
 - A key acts for the **whole organization** that created it, and only that organization.
+- A key is **Read and write** (the default) or **Read only**. A read-only key can make every `GET` call below; adding and stopping leads with it is `403`.
 - **Revoke** stops a key at once. Settings keeps showing when each key was last used.
 
 Send the key in the `Authorization` header of every request:
@@ -23,7 +24,7 @@ curl https://agentsdr.example.com/api/v1/campaigns \
   -H "Authorization: Bearer asdr_..."
 ```
 
-A missing, unknown or revoked key gets `401`. Errors are JSON: `{ "error": "..." }`, with a message that names the field at fault.
+A missing, unknown or revoked key gets `401`; a read-only key on a write call gets `403`. Errors are JSON: `{ "error": "..." }`, with a message that names the field at fault.
 
 ## List email campaigns
 
@@ -38,6 +39,38 @@ A missing, unknown or revoked key gets `401`. Errors are JSON: `{ "error": "..."
 ```
 
 Use the `id` in the calls below. You can also copy it from the campaign's address in the app.
+
+## Get a campaign
+
+`GET /api/v1/campaigns/:id`
+
+```json
+{
+  "id": "0b6a3c1e-...", "name": "Launch follow-up", "status": "active", "createdAt": "2026-11-05T09:30:00.000Z",
+  "steps": 3,
+  "leads": { "total": 120, "pending": 40, "inSequence": 60, "replied": 9, "completed": 8, "bounced": 2, "suppressed": 1 },
+  "emails": { "sent": 150, "scheduled": 70, "failed": 1 }
+}
+```
+
+`pending` leads have not been emailed yet; `inSequence` have, with steps still to go; `completed` had every step sent, or were stopped.
+
+## Look up leads in a campaign
+
+`GET /api/v1/campaigns/:id/leads?email=maker@example.com&email=other@example.com`
+
+Up to 100 addresses, repeated or comma-separated, matched whatever their case.
+
+```json
+{
+  "leads": [
+    { "email": "maker@example.com", "status": "in_follow_up", "emailsSent": 2, "lastSentAt": "2026-11-10T08:02:00.000Z", "nextSendAt": "2026-11-13T08:00:00.000Z", "addedAt": "2026-11-05T09:31:00.000Z" }
+  ],
+  "notFound": ["other@example.com"]
+}
+```
+
+`status` is one of `pending` (not emailed yet), `initial_sent` and `in_follow_up` (in the sequence), `reply_processing` and `reply_received` (they replied), `sequence_completed` (every step sent, or stopped), `bounced` and `suppressed`.
 
 ## Add leads to a campaign
 
@@ -107,8 +140,36 @@ Up to 500 emails per request. Calling it again is harmless.
 
 A reply already stops a lead's sequence on its own; you only need this call for something that happens outside email.
 
+## CRM: Action required
+
+`GET /api/v1/crm/action-required?group=reply&limit=20&offset=0`
+
+The CRM's Action required queue, newest activity first: the leads waiting on someone in your team. `group` is optional: `reply` (immediate reply), `follow_up` (follow-up due), `classification` (confirm classification), `next_step` (needs a next step) or `problem` (error or failed). `limit` is 1 to 50, 20 by default.
+
+```json
+{
+  "items": [
+    {
+      "recordId": "7d1e...",
+      "person": { "name": "Asha Rao", "email": "maker@example.com", "company": "Example Inc" },
+      "channel": "email",
+      "action": "Reply review",
+      "group": "reply",
+      "groupLabel": "Immediate reply",
+      "dueAt": "2026-11-12T09:00:00.000Z",
+      "category": "interested",
+      "latestReply": { "at": "2026-11-12T08:41:00.000Z", "excerpt": "Sounds good, can we talk Thursday?" },
+      "draft": { "status": "awaiting_review", "channel": "email", "subject": null }
+    }
+  ],
+  "total": 18, "limit": 20, "offset": 0, "nextOffset": null
+}
+```
+
+`nextOffset` is the `offset` of the next page, or `null` on the last one. `latestReply.excerpt` is the first 240 characters of their latest message.
+
 ## Self-hosting notes
 
-- The table behind the keys is created by `scripts/create-api-keys.ts`. A fresh install has it already; an existing one runs the script once (see [Upgrading](/self-hosting/production#upgrading)).
+- The table behind the keys is created by `scripts/create-api-keys.ts`, and read-only keys need `scripts/add-api-key-access.ts`. A fresh install has both already; an existing one runs each once (see [Upgrading](/self-hosting/production#upgrading)). Keys created before it stay read and write.
 - While `PAUSE_CAMPAIGN_MUTATIONS` is on, adding and stopping leads answer `503`, like the same actions in the app.
 - The public demo refuses both.

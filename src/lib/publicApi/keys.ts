@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
+import { type ApiCaller, type ApiKeyAccess, isApiKeyAccess, scopesForKeyAccess } from "./access";
 import { apiKeys } from "./schema";
 import { apiKeyFromAuthorization, createApiKeySecret, hashApiKey } from "./token";
 
@@ -11,6 +12,7 @@ export type ApiKeySummary = {
   id: string;
   name: string;
   keyPrefix: string;
+  access: ApiKeyAccess;
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
@@ -26,6 +28,7 @@ function summary(row: typeof apiKeys.$inferSelect): ApiKeySummary {
     id: row.id,
     name: row.name,
     keyPrefix: row.keyPrefix,
+    access: row.access,
     createdAt: row.createdAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     revokedAt: row.revokedAt?.toISOString() ?? null,
@@ -39,14 +42,19 @@ export async function listApiKeys(): Promise<ApiKeySummary[]> {
 }
 
 /** Creates a key; the returned `key` is the only time it exists in clear. */
-export async function createApiKey(name: string, createdBy: string): Promise<{ key: string; apiKey: ApiKeySummary }> {
+export async function createApiKey(
+  name: string,
+  createdBy: string,
+  access: ApiKeyAccess = "read_write",
+): Promise<{ key: string; apiKey: ApiKeySummary }> {
+  if (!isApiKeyAccess(access)) throw new Error("Choose read and write, or read only");
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Give the key a name");
   if (trimmed.length > MAX_NAME_LENGTH) throw new Error(`Keep the name under ${MAX_NAME_LENGTH} characters`);
   const { key, hash, prefix } = createApiKeySecret();
   const [row] = await db
     .insert(apiKeys)
-    .values({ organizationId: currentOrganizationId(), name: trimmed, keyPrefix: prefix, keyHash: hash, createdBy })
+    .values({ organizationId: currentOrganizationId(), name: trimmed, keyPrefix: prefix, keyHash: hash, access, createdBy })
     .returning();
   return { key, apiKey: summary(row) };
 }
@@ -69,11 +77,11 @@ export async function revokeApiKey(id: string): Promise<boolean> {
  * webhook, the request finds its organization through the data (the key's
  * hash, unique across organizations).
  */
-export async function organizationForApiKey(authorization: string | null): Promise<{ organizationId: string; keyId: string } | null> {
+export async function organizationForApiKey(authorization: string | null): Promise<ApiCaller | null> {
   const key = apiKeyFromAuthorization(authorization);
   if (!key) return null;
   const [row] = await db
-    .select({ id: apiKeys.id, organizationId: apiKeys.organizationId })
+    .select({ id: apiKeys.id, organizationId: apiKeys.organizationId, access: apiKeys.access })
     .from(apiKeys)
     .where(and(eq(apiKeys.keyHash, hashApiKey(key)), isNull(apiKeys.revokedAt)))
     .limit(1);
@@ -87,5 +95,7 @@ export async function organizationForApiKey(authorization: string | null): Promi
       eq(apiKeys.id, row.id),
       or(isNull(apiKeys.lastUsedAt), lt(apiKeys.lastUsedAt, new Date(now.getTime() - LAST_USED_RESOLUTION_MS))),
     ));
-  return { organizationId: row.organizationId, keyId: row.id };
+  // An unknown value (a hand-edited row) reads as the narrower access.
+  const access: ApiKeyAccess = row.access === "read_write" ? "read_write" : "read";
+  return { organizationId: row.organizationId, scopes: scopesForKeyAccess(access), credential: { kind: "api_key", keyId: row.id, access } };
 }

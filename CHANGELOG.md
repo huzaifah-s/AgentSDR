@@ -17,10 +17,21 @@ Each release lists the database migrations it needs; see
   (`POST /api/v1/campaigns/:id/leads`, the same duplicate and suppression
   rules as a sheet import) and stop a lead's sequence without suppressing
   them (`POST /api/v1/campaigns/:id/leads/stop`). See `docs/api.mdx`.
+- **Read-only API keys and read endpoints.** A key is Read and write (as
+  before) or Read only. New reads: one campaign's numbers
+  (`GET /api/v1/campaigns/:id`), where leads stand in a campaign
+  (`GET /api/v1/campaigns/:id/leads?email=`) and the CRM's Action required
+  queue (`GET /api/v1/crm/action-required`). Every key, read-only or not,
+  can make these reads, so existing keys can now also read Action required.
+- **MCP server** at `/api/v1/mcp` for AI assistants (Claude Code, Cursor, any
+  MCP client), with the same keys: every public API call is a tool, and a
+  read-only key sees only the read tools. See `docs/mcp.mdx`.
 
 ### Migrations
 
 - `bun run scripts/create-api-keys.ts` creates the `api_keys` table.
+- `bun run scripts/add-api-key-access.ts` adds `api_keys.access` (existing
+  keys stay read and write).
 
 ## [0.3.1] - 2026-10-08
 

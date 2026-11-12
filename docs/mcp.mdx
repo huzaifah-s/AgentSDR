@@ -1,6 +1,6 @@
 ---
 title: "MCP server"
-description: "Let an AI assistant list your email campaigns, add leads and stop a lead's sequence, with an API key."
+description: "Let an AI assistant read your email campaigns and the CRM queue, add leads and stop a lead's sequence, with an API key."
 icon: "robot"
 ---
 
@@ -9,6 +9,8 @@ BraintreeSDR is also an [MCP](https://modelcontextprotocol.io) server, so an AI 
 ## Connect
 
 You need an API key. Owners and admins create one in **Settings, API keys**; name it after the assistant that will use it. The key acts for the whole organization, and **Revoke** stops it at once.
+
+Choose **Read only** for an assistant that should only look: it gets the read tools below and never sees the tools that add or stop leads.
 
 The server's address is your site's address followed by `/api/v1/mcp`. Settings, API keys shows the full address. It speaks Streamable HTTP and expects the key as `Authorization: Bearer <key>`.
 
@@ -48,9 +50,14 @@ Clients that connect only through OAuth, such as custom connectors on claude.ai,
 
 | Tool | What it does | Same as |
 |---|---|---|
-| `list_campaigns` | The organization's email campaigns, newest first: id, name, status, created. Read-only. | `GET /api/v1/campaigns` |
-| `add_leads_to_campaign` | Adds up to 500 leads to a campaign. | `POST /api/v1/campaigns/:id/leads` |
-| `stop_campaign_leads` | Ends a campaign's sequence for up to 500 leads, by email. | `POST /api/v1/campaigns/:id/leads/stop` |
+| `list_campaigns` | The organization's email campaigns, newest first: id, name, status, created. | `GET /api/v1/campaigns` |
+| `get_campaign` | One campaign's numbers: leads by status, emails sent, scheduled and failed. | `GET /api/v1/campaigns/:id` |
+| `get_campaign_leads` | Where up to 100 people stand in a campaign, by email: status, emails sent, last and next send. | `GET /api/v1/campaigns/:id/leads?email=` |
+| `list_action_required` | The CRM's Action required queue, newest first, filterable by group, in pages of up to 50. | `GET /api/v1/crm/action-required` |
+| `add_leads_to_campaign` | Adds up to 500 leads to a campaign. Read-and-write keys only. | `POST /api/v1/campaigns/:id/leads` |
+| `stop_campaign_leads` | Ends a campaign's sequence for up to 500 leads, by email. Read-and-write keys only. | `POST /api/v1/campaigns/:id/leads/stop` |
+
+The first four only read; an assistant client may run them without asking you each time.
 
 The rules and the results are the ones in the [public API](/api):
 

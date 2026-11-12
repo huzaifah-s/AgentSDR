@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { withApiKey } from "@/lib/publicApi/http";
 import { buildMcpServer } from "@/lib/publicApi/mcp";
-import { addLeads, listCampaigns, stopLeads } from "@/lib/publicApi/operations";
+import * as operations from "@/lib/publicApi/operations";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +16,8 @@ export const dynamic = "force-dynamic";
 // transport answers once every tool call in the request has finished, which
 // keeps the tools inside that scope.
 export async function POST(req: NextRequest) {
-  return withApiKey(req, async () => {
-    const server = buildMcpServer({ listCampaigns, addLeads, stopLeads });
+  return withApiKey(req, async (caller) => {
+    const server = buildMcpServer(operations, caller.scopes);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try {

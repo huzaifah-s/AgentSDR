@@ -6,5 +6,5 @@ import { listCampaigns } from "@/lib/publicApi/operations";
 // { campaigns: [{ id, name, status, createdAt }] }. Authorized by API key.
 // The MCP tool list_campaigns is the same operation.
 export async function GET(req: NextRequest) {
-  return withApiKey(req, async () => NextResponse.json(await listCampaigns()));
+  return withApiKey(req, async () => NextResponse.json(await listCampaigns()), { scope: "campaigns:read" });
 }

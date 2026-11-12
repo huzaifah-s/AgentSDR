@@ -935,7 +935,9 @@ CREATE TABLE public.api_keys (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     last_used_at timestamp with time zone,
-    revoked_at timestamp with time zone
+    revoked_at timestamp with time zone,
+    access text DEFAULT 'read_write'::text NOT NULL,
+    CONSTRAINT api_keys_access_check CHECK ((access = ANY (ARRAY['read'::text, 'read_write'::text])))
 );
 
 --

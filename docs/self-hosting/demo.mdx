@@ -4,7 +4,7 @@ description: "Run a read-only AgentSDR anyone can open without signing in, fille
 icon: "presentation"
 ---
 
-A demo deployment lets people explore AgentSDR before installing it. Visitors open the address and are already inside the app as Alex Morgan, Head of Sales at **Northwind**, a fictional company. Every page has data: campaigns on all three channels, replies with AI drafts waiting for review, the CRM pipeline, call transcripts, Tables and Analytics. Nothing a visitor does is saved.
+A demo deployment lets people explore AgentSDR before installing it. Visitors open the address and are already inside the app as Alex Morgan, Head of Sales at **Northwind**, a fictional company. Every page has data: campaigns on all three channels, AI calling campaigns run from cloud calling numbers, replies with AI drafts waiting for review, the CRM pipeline, call transcripts, LinkedIn posts, Tables and Analytics. Nothing a visitor does is saved.
 
 <Warning>
 A demo is its **own deployment with its own database**. Never set `DEMO_MODE` on an instance that holds real data: every visitor is signed in with no password. The app refuses to move the demo's clock if any organization in the database is not a seeded demo one, but sign-in has no such check.
@@ -17,7 +17,7 @@ A demo is its **own deployment with its own database**. Never set `DEMO_MODE` on
 | **Sign-in** | Anyone without a session is signed in as the demo user at `/demo` and sent where they were going. Each visitor gets a session of their own. The sign-in, sign-up and onboarding screens lead to `/demo` too. |
 | **Read-only** | Every write is refused with `403 DEMO_READ_ONLY`, and the page shows a short "read-only demo" notice. A few writes the UI makes on its own when something opens (marking a thread or chat read) answer success without doing anything, so nothing looks broken. |
 | **No background work** | The send loops, the enrichment worker and the CRM's AI worker do not start. Requests that would call a model or restart a job (`/api/qualify`, `/api/campaigns/:id/stream`, the OpenRouter model list) are refused. The scheduled jobs do not run either, and no cron is needed. |
-| **Banner** | A strip across the top says the people and conversations are made up and links to GitHub and these docs. Sign out and Create organization are hidden. |
+| **Banner** | A strip across the top says the people and conversations are made up and that nothing is saved. Sign out and Create organization are hidden. |
 | **Clock** | Once at boot and every hour, the demo moves every date in the database forward by the whole days since it was seeded, so "replied 2 days ago" stays true and the last-30-days charts stay full. |
 
 The LinkedIn, WhatsApp, email and R2 integrations are stored with placeholder credentials so their pages open. Nothing ever uses them. Playing a call recording does not work, because there is no audio behind it; transcripts and summaries show as normal.
@@ -70,4 +70,4 @@ Without `DEMO_MODE`, the same seed is an ordinary organization you can sign in t
 
 ## What the seed creates
 
-`scripts/db/seed-demo.ts` runs the modules in `scripts/db/demo/` against one fictional world (`content.ts`). Northwind, its team and every person are invented; the companies they prospect are real, well-known ones, so lead lists show real logos, but nobody there said anything shown. Phone numbers are in ranges reserved for fiction. Re-running it on a seeded database does nothing.
+`scripts/db/seed-demo.ts` runs the modules in `scripts/db/demo/` against one fictional world (`content.ts`): the lead database, email, LinkedIn, WhatsApp and rep calls, AI calling (`aiCalling.ts`: calling numbers, AI campaigns, agent calls with transcripts, a lead who rang back, a rep's Call now), the CRM, Tables, LinkedIn posts with writing voices and a content brief (`posts.ts`), and the smaller pieces (`extras.ts`: an SMTP + IMAP mailbox, API keys, CompanyEnrich, a sequence that sends its follow-ups automatically, people added by hand with one-off emails and logged updates). Northwind, its team and every person are invented; the companies they prospect are real, well-known ones, so lead lists show real logos, but nobody there said anything shown. Phone numbers are in ranges reserved for fiction. Re-running it on a seeded database does nothing.

@@ -386,11 +386,11 @@ export const KNOWLEDGE_DOCS: { title: string; kind: "company" | "product" | "pri
   {
     title: "About Northwind",
     kind: "company",
-    tags: ["company", "positioning"],
+    tags: ["company", "positioning", "public"],
     alwaysInclude: true,
     content: `# About Northwind
 
-Northwind is a fictional company used to show AgentSDR with sample data. Nothing here describes a real business.
+Northwind is a fictional company used to show BraintreeSDR with sample data. Nothing here describes a real business.
 
 ## What we sell
 ${PRODUCT} is revenue intelligence for B2B sales teams of 5 to 100 reps. It pulls lead and company data together, scores accounts against your ICP, and tells reps who to contact this week and why.
@@ -425,7 +425,7 @@ Never quote a discount beyond 15% in writing — route those to Alex.`,
   {
     title: "Case study: Brightloop books 2.1x more meetings",
     kind: "case_study",
-    tags: ["case study", "saas"],
+    tags: ["case study", "saas", "public"],
     alwaysInclude: false,
     content: `# Brightloop (B2B SaaS, 140 employees)
 
@@ -433,7 +433,9 @@ Never quote a discount beyond 15% in writing — route those to Alex.`,
 **What changed:** ${PRODUCT} prioritised 400 accounts a week and drafted the first touch.
 **Result:** first meetings went from 38 to 81 per month within one quarter; research time down 70%.
 
-> "My reps finally spend their time talking to people instead of tabs." — VP of Sales, Brightloop (fictional)`,
+> "My reps finally spend their time talking to people instead of tabs." — VP of Sales, Brightloop (fictional)
+
+Brightloop has agreed to be named publicly, including in LinkedIn posts.`,
   },
   {
     title: "Handling common objections",

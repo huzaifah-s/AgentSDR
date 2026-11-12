@@ -136,7 +136,10 @@ async function main() {
     const { seedEmail } = await import("./demo/email");
     const { seedLinkedin } = await import("./demo/linkedin");
     const { seedWhatsapp } = await import("./demo/whatsapp");
+    const { seedAiCalling } = await import("./demo/aiCalling");
     const { seedWorkspace } = await import("./demo/workspace");
+    const { seedPosts } = await import("./demo/posts");
+    const { seedExtras } = await import("./demo/extras");
     const { finalizeDemo } = await import("./demo/finalize");
 
     console.log(`Seeding "${ORG_NAME}" (${org.id})`);
@@ -145,8 +148,11 @@ async function main() {
     await step("email campaigns, mailboxes and replies", () => seedEmail(ctx));
     await step("LinkedIn accounts, campaigns and conversations", () => seedLinkedin(ctx));
     await step("WhatsApp numbers, chats, campaigns and calls", () => seedWhatsapp(ctx));
+    await step("AI calling: numbers, campaigns, agent calls", () => seedAiCalling(ctx));
     await step("CRM classifications, pipeline and drafts", () => seedCrmOutcomes(ctx));
     await step("Tables and prospecting", () => seedWorkspace(ctx));
+    await step("LinkedIn posts, writing voices and the content brief", () => seedPosts(ctx));
+    await step("IMAP mailbox, API keys, manual outreach", () => seedExtras(ctx));
     await step("finishing touches", () => finalizeDemo(ctx));
   });
 

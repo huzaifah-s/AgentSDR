@@ -57,7 +57,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-stroke-soft-200 bg-bg-white-0 px-4 md:hidden">
-        <Link href="/analytics" aria-label="Braintree Reach home">
+        <Link href="/analytics" aria-label="BraintreeSDR home">
           <Logo className="text-text-strong-950" iconClassName="size-6" textClassName="text-[17px]" />
         </Link>
         <button

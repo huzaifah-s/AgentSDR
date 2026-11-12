@@ -34,7 +34,7 @@ export async function sendAuthEmail(email: AuthEmail): Promise<void> {
     return;
   }
   const from = process.env.AUTH_EMAIL_FROM;
-  if (!from) throw new Error("AUTH_EMAIL_FROM is not set — e.g. Braintree Reach <auth@yourdomain.com>");
+  if (!from) throw new Error("AUTH_EMAIL_FROM is not set — e.g. BraintreeSDR <auth@yourdomain.com>");
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -59,7 +59,7 @@ export function authEmail(input: { to: string; subject: string; intro: string; a
   const html = `<!doctype html><html><body style="margin:0;background:#f5f7fa;font-family:Inter,Arial,sans-serif;color:#0e121b">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:40px 16px">
 <table role="presentation" width="100%" style="max-width:480px;background:#ffffff;border-radius:16px;padding:32px" cellpadding="0" cellspacing="0">
-<tr><td style="font-size:20px;font-weight:600;padding-bottom:16px">Braintree Reach</td></tr>
+<tr><td style="font-size:20px;font-weight:600;padding-bottom:16px">BraintreeSDR</td></tr>
 <tr><td style="font-size:15px;line-height:1.6;color:#525866;padding-bottom:24px">${escapeHtml(input.intro)}</td></tr>
 <tr><td style="padding-bottom:24px"><a href="${escapeHtml(input.url)}" style="display:inline-block;background:#335cff;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:10px">${escapeHtml(input.action)}</a></td></tr>
 <tr><td style="font-size:13px;line-height:1.6;color:#99a0ae">${escapeHtml(outro)}<br><br>Or paste this link into your browser:<br><span style="word-break:break-all">${escapeHtml(input.url)}</span></td></tr>

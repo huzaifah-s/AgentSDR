@@ -5,7 +5,7 @@ import { Mascot } from "./Mascot";
 import type { MascotCycle } from "./mascotFrames";
 
 /**
- * The Braintree Reach logo — the one source for the app chrome and the login
+ * The BraintreeSDR logo — the one source for the app chrome and the login
  * screen. The tree is ./BraintreeMark.tsx; the favicon (src/app/icon.svg,
  * apple-icon.png) is the same tree drawn as static files; change them together.
  */
@@ -56,7 +56,7 @@ export function Logo({
   return (
     <span className={cn("inline-flex items-center gap-2.5", className)}>
       <AppIcon small className={iconClassName} />
-      <span className={cn(brandDisplayClass, "whitespace-nowrap leading-none tracking-[-0.025em]", textClassName)}>Braintree Reach</span>
+      <span className={cn(brandDisplayClass, "whitespace-nowrap leading-none tracking-[-0.025em]", textClassName)}>BraintreeSDR</span>
     </span>
   );
 }

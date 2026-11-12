@@ -22,7 +22,7 @@ const fontSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "Braintree Reach",
+  title: "BraintreeSDR",
   // A private workspace behind sign-in: keep every page out of search.
   robots: { index: false, follow: false },
   description: "Outreach, qualification and CRM for GTM teams",

@@ -16,11 +16,11 @@ function accessRequestHref(email: string) {
   const body = [
     "Hi,",
     "",
-    "Could you send me an invite to Braintree Reach?",
+    "Could you send me an invite to BraintreeSDR?",
     "",
     `Work email: ${email.trim()}`,
   ].join("\n");
-  const subject = "Invite to Braintree Reach";
+  const subject = "Invite to BraintreeSDR";
   return `mailto:${ACCESS_REQUEST_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
@@ -72,7 +72,7 @@ export function SignInForm({
 
   return (
     <AuthShell
-      title="Sign in to Braintree Reach"
+      title="Sign in to BraintreeSDR"
       footer={
         signupAvailable ? (
           <>

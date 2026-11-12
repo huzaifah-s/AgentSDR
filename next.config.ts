@@ -1,8 +1,23 @@
 import type { NextConfig } from "next";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 import pkg from "./package.json";
 
-const nextConfig: NextConfig = {
+/** The dev server's memory target, in MB (TURBOPACK_MEMORY_LIMIT_MB to change it). */
+const DEV_MEMORY_LIMIT_MB = Number(process.env.TURBOPACK_MEMORY_LIMIT_MB) || 4096;
+
+const nextConfig = (phase: string): NextConfig => ({
   output: "standalone",
+
+  // This folder, never a parent. Next.js otherwise takes the outermost
+  // lockfile as the root, so a dev server in a git worktree under
+  // .claude/worktrees/ took the main checkout as its project — every other
+  // worktree included — and grew past 10 GB.
+  turbopack: { root: __dirname },
+
+  // Turbopack keeps every route it has compiled in memory, which on this app
+  // reached 12 GB in an hour of `next dev`. In dev it aims to stay under this
+  // and evicts its caches to do so; builds are left as they were.
+  ...(phase === PHASE_DEVELOPMENT_SERVER ? { experimental: { turbopackMemoryLimit: DEV_MEMORY_LIMIT_MB * 1024 * 1024 } } : {}),
 
   // A second dev server beside the usual one (e.g. the demo, DEMO_MODE=true,
   // on its own database) needs its own build directory: two `next dev` in one
@@ -55,6 +70,6 @@ const nextConfig: NextConfig = {
       { source: "/companies", destination: "/leads?tab=companies", permanent: false },
     ];
   },
-};
+});
 
 export default nextConfig;
